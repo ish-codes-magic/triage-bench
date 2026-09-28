@@ -4,7 +4,7 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 
 | ADR | Decision | Milestone |
 |-----|----------|-----------|
-| [0001](#adr-0001-python-tooling-uv-lockfile-ruff-pyright-strict) | Python tooling: uv + lockfile, ruff, pyright strict | M0 |
+| [0001](#adr-0001-python-tooling-with-uv-ruff-and-pyright-strict) | Python tooling with uv, ruff and pyright strict | M0 |
 | [0002](#adr-0002-typed-layered-yaml-configuration) | Typed, layered YAML configuration | M0 |
 | [0003](#adr-0003-litellm-behind-our-own-client) | LiteLLM behind our own client | M0 |
 | [0004](#adr-0004-sampling-parameters-are-optional-determinism-is-measured) | Sampling parameters are optional; determinism is measured | M0 |
@@ -16,7 +16,7 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 
 ---
 
-## ADR-0001: Python tooling: uv + lockfile, ruff, pyright strict
+## ADR-0001: Python tooling with uv, ruff and pyright strict
 
 **Context.**
 - The project must be reproducible by a stranger ("3 commands") and typed well enough to be a hiring signal.

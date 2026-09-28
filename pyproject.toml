@@ -6,7 +6,9 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
+    "litellm>=1.103.0",
     "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
     "pyyaml>=6.0.3",
     "typer>=0.27.2",
 ]
@@ -57,6 +59,10 @@ venv = ".venv"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+filterwarnings = [
+    # Noise from litellm's own type definitions at import; not actionable here.
+    "ignore:Item '.*' on TypedDict class '.*' is using the `ReadOnly` qualifier:UserWarning",
+]
 markers = [
     "your_turn: a YOUR TURN exercise; xfails until the stub is implemented (run with -m your_turn --runxfail to see it fail)",
 ]

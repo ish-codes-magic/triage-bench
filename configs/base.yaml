@@ -27,3 +27,4 @@ cache:
 paths:
   runs_dir: runs
   prices_file: configs/prices.yaml
+  ledger_file: runs/spend_ledger.jsonl   # all-time spend; the $150 cap reads this

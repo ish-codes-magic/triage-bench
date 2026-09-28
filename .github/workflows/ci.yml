@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: jobs can read the repo and nothing else unless they opt in.
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's in-flight run; pushes to main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint & types
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      # Same hooks as a local commit (ruff, ruff format, pyright, file hygiene),
+      # so "passes locally" and "passes in CI" mean the same thing.
+      - name: pre-commit (all files)
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is a real target: the project is developed on it.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      - name: pytest
+        shell: bash
+        # GitHub runs bash with -eo pipefail, so a pytest failure still fails the step.
+        run: |
+          uv run pytest -q 2>&1 | tee pytest.log
+          {
+            echo "### Tests (${{ matrix.os }})"
+            echo '```'
+            tail -n 1 pytest.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -20,6 +20,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "actionlint-py>=1.7.12.25",
     "pre-commit>=4.6.2",
     "pyright>=1.1.414",
     "pytest>=9.1.1",

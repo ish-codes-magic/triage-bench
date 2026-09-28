@@ -40,6 +40,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: actionlint
+        name: actionlint (GitHub workflows)
+        entry: uv run actionlint
+        language: system
+        files: ^\.github/(workflows|actions)/
+        pass_filenames: false
       - id: pytest
         name: pytest
         entry: uv run pytest -q

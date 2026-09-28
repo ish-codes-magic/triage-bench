@@ -15,7 +15,13 @@ from triagelab.cost import (
     Usage,
 )
 from triagelab.ledger import SpendLedger
-from triagelab.llm_client import Completion, LLMClient, LLMRequest, Message
+from triagelab.llm_client import (
+    Completion,
+    LLMClient,
+    LLMRequest,
+    Message,
+    prompt_tokens_upper_bound,
+)
 
 MODEL = "fake/model"
 PRICES = PriceTable(
@@ -48,9 +54,6 @@ class FakeBackend:
             resolved_model="fake-model-2026-09-01",
             usage=Usage(tokens_in=1000, tokens_out=100),
         )
-
-    def count_prompt_tokens(self, request: LLMRequest) -> int:
-        return 1000
 
     def is_retryable(self, err: Exception) -> bool:
         return isinstance(err, RateLimitedError)
@@ -125,7 +128,7 @@ def test_different_sample_index_is_a_different_cache_entry(tmp_path: Path) -> No
 
 def test_budget_guard_blocks_before_the_provider_is_called(tmp_path: Path) -> None:
     backend = FakeBackend()
-    # worst case = 1000 * 2/1e6 + 100 * 10/1e6 = 0.003 > 0.001
+    # worst case = 1018 bound tokens * 2/1e6 + 100 * 10/1e6 ~= 0.003 > 0.001
     client = _client(tmp_path, backend, per_run_usd=0.001)
     with pytest.raises(BudgetExceededError):
         client.complete(_request())
@@ -171,3 +174,15 @@ def test_transient_errors_are_retried(tmp_path: Path) -> None:
     resp = client.complete(_request())
     assert resp.attempts == 3
     assert client.stats.retries == 2
+
+
+def test_prompt_bound_counts_bytes_not_characters() -> None:
+    # "hi" is 2 bytes; "日本" is 6 bytes. A byte bound must never under-count CJK text.
+    ascii_bound = prompt_tokens_upper_bound(_request())
+    cjk = LLMRequest(model=MODEL, messages=(Message(role="user", content="日本"),), max_tokens=1)
+    assert prompt_tokens_upper_bound(cjk) - ascii_bound == 4
+
+
+def test_prompt_bound_includes_the_schema() -> None:
+    typed = _request().model_copy(update={"response_schema": Verdict.model_json_schema()})
+    assert prompt_tokens_upper_bound(typed) > prompt_tokens_upper_bound(_request())

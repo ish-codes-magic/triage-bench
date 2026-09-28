@@ -16,12 +16,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from triagelab.cache import DiskCache
 from triagelab.config import RetryConfig
 from triagelab.cost import BudgetGuard, PriceTable, Usage, cost_usd, worst_case_cost_usd
-from triagelab.hashing import stable_hash
+from triagelab.hashing import canonical_json, stable_hash
 from triagelab.ledger import SpendEntry, SpendLedger
 from triagelab.retry import UniformSource, backoff_delay, call_with_retries
 
 # Bump to invalidate every cached response when the cached format or semantics change.
 CACHE_FORMAT_VERSION = 1
+
+# Headroom for tokens we never see as text: chat-template markers, provider-injected
+# system prompts for structured output or tool use, and per-message framing.
+_PROMPT_OVERHEAD_TOKENS = 1_000
+_PER_MESSAGE_OVERHEAD_TOKENS = 16
 
 
 class Message(BaseModel):
@@ -81,9 +86,27 @@ class LLMResponse(BaseModel):
 
 class CompletionBackend(Protocol):
     def complete(self, request: LLMRequest, *, timeout_s: float) -> Completion: ...
-    def count_prompt_tokens(self, request: LLMRequest) -> int: ...
     def is_retryable(self, err: Exception) -> bool: ...
     def retry_after_s(self, err: Exception) -> float | None: ...
+
+
+def prompt_tokens_upper_bound(request: LLMRequest) -> int:
+    """A prompt-size bound that can only over-count, used by the budget check.
+
+    Modern tokenizers (byte-level BPE, or SentencePiece with byte fallback) never emit
+    more than one token per UTF-8 byte, so the byte count of everything we send is a
+    true ceiling. It over-estimates English by roughly 3-4x, which is harmless for a
+    safety check, and it needs no tokenizer download, network, or provider-specific code.
+    """
+    text_bytes = sum(len(m.content.encode("utf-8")) for m in request.messages)
+    schema = request.response_schema
+    schema_bytes = len(canonical_json(schema).encode("utf-8")) if schema else 0
+    return (
+        text_bytes
+        + schema_bytes
+        + _PER_MESSAGE_OVERHEAD_TOKENS * len(request.messages)
+        + _PROMPT_OVERHEAD_TOKENS
+    )
 
 
 class CallStats(BaseModel):
@@ -143,7 +166,7 @@ class LLMClient:
                 update={"cache_hit": True, "cost_usd": 0.0, "latency_ms": self._ms_since(started)}
             )
 
-        prompt_tokens = self._backend.count_prompt_tokens(request)
+        prompt_tokens = prompt_tokens_upper_bound(request)
         self._guard.check(worst_case_cost_usd(prompt_tokens, request.max_tokens, price))
 
         attempts = 0

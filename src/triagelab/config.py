@@ -62,6 +62,7 @@ class CacheConfig(_Strict):
 class PathsConfig(_Strict):
     runs_dir: PortablePath = Path("runs")
     prices_file: PortablePath = Path("configs/prices.yaml")
+    ledger_file: PortablePath = Path("runs/spend_ledger.jsonl")
 
 
 class Config(_Strict):

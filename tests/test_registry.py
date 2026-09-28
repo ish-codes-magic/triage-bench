@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 import yaml
 
 from triagelab.config import load_config
@@ -36,11 +35,13 @@ def test_create_run_records_config_git_and_manifest(tmp_path: Path) -> None:
     assert manifest.config_fingerprint == cfg.fingerprint()
 
 
-def test_create_run_never_overwrites(tmp_path: Path) -> None:
+def test_same_second_runs_get_distinct_ids_and_never_overwrite(tmp_path: Path) -> None:
     cfg = load_config(REPO_ROOT / "configs" / "base.yaml")
-    create_run(cfg, runs_dir=tmp_path, command="a", now=NOW, git=GIT)
-    with pytest.raises(FileExistsError):
-        create_run(cfg, runs_dir=tmp_path, command="b", now=NOW, git=GIT)
+    first, m1 = create_run(cfg, runs_dir=tmp_path, command="a", now=NOW, git=GIT)
+    second, m2 = create_run(cfg, runs_dir=tmp_path, command="b", now=NOW, git=GIT)
+    assert m2.run_id == f"{m1.run_id}-2"
+    assert first != second
+    assert '"command": "a"' in (first / "manifest.json").read_text(encoding="utf-8")
 
 
 def test_list_runs_newest_first_with_cost(tmp_path: Path) -> None:

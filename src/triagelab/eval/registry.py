@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime
+from itertools import count
 from pathlib import Path
 
 import yaml
@@ -74,8 +75,9 @@ def create_run(
     cfg: Config, *, runs_dir: Path, command: str, now: datetime, git: GitInfo
 ) -> tuple[Path, RunManifest]:
     fingerprint = cfg.fingerprint()
+    run_dir = _claim_run_dir(runs_dir, make_run_id(now, cfg.name, fingerprint))
     manifest = RunManifest(
-        run_id=make_run_id(now, cfg.name, fingerprint),
+        run_id=run_dir.name,
         name=cfg.name,
         created_at=now,
         command=command,
@@ -85,14 +87,29 @@ def create_run(
         python_version=sys.version.split()[0],
         platform=platform.platform(),
     )
-    run_dir = runs_dir / manifest.run_id
-    run_dir.mkdir(parents=True, exist_ok=False)  # never silently overwrite a past run
     (run_dir / "config.yaml").write_text(
         yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False), encoding="utf-8"
     )
     (run_dir / "git_sha").write_text(git.label() + "\n", encoding="utf-8")
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
     return run_dir, manifest
+
+
+def _claim_run_dir(runs_dir: Path, base_id: str) -> Path:
+    """Create a fresh run folder, suffixing `-2`, `-3`... if the id is taken.
+
+    `mkdir(exist_ok=False)` is atomic, so two processes starting in the same second can
+    never claim the same folder, and a past run is never overwritten.
+    """
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    for n in count(1):
+        candidate = runs_dir / (base_id if n == 1 else f"{base_id}-{n}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate
+    raise AssertionError("unreachable: count() is infinite")
 
 
 def write_cost(run_dir: Path, stats: CallStats) -> None:

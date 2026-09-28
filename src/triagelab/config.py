@@ -10,12 +10,17 @@ an ablation without anyone noticing.
 """
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 
 from triagelab.hashing import stable_hash
+
+# Serialize paths with forward slashes on every OS. Otherwise the same config would dump
+# as `configs\prices.yaml` on Windows and `configs/prices.yaml` on Linux, and its
+# fingerprint (and every cache key derived from it) would differ by machine.
+PortablePath = Annotated[Path, PlainSerializer(lambda p: p.as_posix(), return_type=str)]
 
 
 class _Strict(BaseModel):
@@ -51,12 +56,12 @@ class RetryConfig(_Strict):
 
 class CacheConfig(_Strict):
     enabled: bool = True
-    dir: Path = Path(".cache/llm")
+    dir: PortablePath = Path(".cache/llm")
 
 
 class PathsConfig(_Strict):
-    runs_dir: Path = Path("runs")
-    prices_file: Path = Path("configs/prices.yaml")
+    runs_dir: PortablePath = Path("runs")
+    prices_file: PortablePath = Path("configs/prices.yaml")
 
 
 class Config(_Strict):

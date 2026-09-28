@@ -25,6 +25,12 @@ def test_fingerprint_is_stable_and_sensitive() -> None:
     assert changed.fingerprint() != a.fingerprint()
 
 
+def test_paths_serialize_identically_on_every_os() -> None:
+    dumped = load_config(BASE).model_dump(mode="json")
+    assert dumped["paths"]["prices_file"] == "configs/prices.yaml"
+    assert dumped["cache"]["dir"] == ".cache/llm"
+
+
 def test_unknown_key_is_rejected(tmp_path: Path) -> None:
     bad = tmp_path / "bad.yaml"
     bad.write_text(

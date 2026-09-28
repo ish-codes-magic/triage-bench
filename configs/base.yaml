@@ -1,0 +1,29 @@
+# Baseline configuration. Experiment files in configs/experiments/ declare
+# `extends: ../base.yaml` and override only what they change.
+name: base
+
+budget:
+  usd_total: 150.0   # AGENTS.md §0: hard cap across all runs
+  usd_per_run: 5.0   # AGENTS.md §0: hard cap within one run
+
+llm:
+  # Placeholder until agent/small/judge models are chosen (end of M0).
+  # Any model used must have an entry in configs/prices.yaml, or calls are refused.
+  model: openai/gpt-6-luna
+  temperature: null   # null = provider default; many current models reject other values
+  seed: null
+  max_tokens: 1024
+  timeout_s: 60
+
+retry:
+  max_attempts: 4
+  base_delay_s: 1.0
+  max_delay_s: 30.0
+
+cache:
+  enabled: true
+  dir: .cache/llm
+
+paths:
+  runs_dir: runs
+  prices_file: configs/prices.yaml

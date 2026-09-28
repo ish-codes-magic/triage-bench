@@ -1,0 +1,83 @@
+# Model prices in USD per 1M tokens, keyed by the LiteLLM model string used in configs.
+#
+# Why we keep our own table instead of trusting LiteLLM's cost map: this file is reviewed,
+# versioned with the code, and cites where each number came from, so a run's cost can be
+# reproduced later. LiteLLM's reported cost is still logged next to ours as a cross-check.
+#
+# A model with no entry here cannot be called: the budget guard refuses to spend money
+# it cannot price.
+#
+# Known simplifications (see docs/DECISIONS.md, ADR-0005):
+#   - Anthropic cache *writes* (1.25x input) are not modelled; we do not enable prompt caching yet.
+#   - Long-context surcharges (OpenAI >272K input, Gemini Pro >200K) are not modelled;
+#     triage prompts stay far below those thresholds.
+
+models:
+  # --- Anthropic ---
+  anthropic/claude-fable-5-1:
+    input_per_mtok: 10.00
+    output_per_mtok: 50.00
+    cached_input_per_mtok: 0.25
+    source: https://platform.claude.com/docs/en/about-claude/pricing
+    verified_on: 2026-09-29
+  anthropic/claude-opus-5-5:
+    input_per_mtok: 4.00
+    output_per_mtok: 20.00
+    cached_input_per_mtok: 0.20
+    source: https://platform.claude.com/docs/en/about-claude/pricing
+    verified_on: 2026-09-29
+  anthropic/claude-sonnet-5-5:
+    input_per_mtok: 2.00
+    output_per_mtok: 10.00
+    cached_input_per_mtok: 0.20
+    source: https://platform.claude.com/docs/en/about-claude/pricing
+    verified_on: 2026-09-29
+  anthropic/claude-haiku-4-5:
+    input_per_mtok: 1.00
+    output_per_mtok: 5.00
+    cached_input_per_mtok: 0.10
+    source: https://platform.claude.com/docs/en/about-claude/pricing
+    verified_on: 2026-09-29
+    notes: Retirement "not sooner than 2026-10-15"; risky as a long-lived small_model.
+
+  # --- OpenAI ---
+  openai/gpt-6-astra:
+    input_per_mtok: 10.00
+    output_per_mtok: 50.00
+    cached_input_per_mtok: 1.00
+    source: https://developers.openai.com/api/docs/pricing
+    verified_on: 2026-09-29
+  openai/gpt-6-sol:
+    input_per_mtok: 2.00
+    output_per_mtok: 10.00
+    cached_input_per_mtok: 0.20
+    source: https://developers.openai.com/api/docs/pricing
+    verified_on: 2026-09-29
+  openai/gpt-6-luna:
+    input_per_mtok: 0.10
+    output_per_mtok: 0.50
+    cached_input_per_mtok: 0.01
+    source: https://developers.openai.com/api/docs/pricing
+    verified_on: 2026-09-29
+
+  # --- Google ---
+  gemini/gemini-3.1-pro-preview:
+    input_per_mtok: 2.00
+    output_per_mtok: 12.00
+    cached_input_per_mtok: 0.20
+    source: https://ai.google.dev/gemini-api/docs/pricing
+    verified_on: 2026-09-29
+    notes: Prompts up to 200K tokens; longer prompts are billed at 4.00/18.00.
+  gemini/gemini-3.8-flash:
+    input_per_mtok: 0.75
+    output_per_mtok: 3.75
+    cached_input_per_mtok: 0.075
+    source: https://ai.google.dev/gemini-api/docs/pricing
+    verified_on: 2026-09-29
+    notes: Introductory price until 2026-12-31; 1.50/7.50 from 2027-01-01. Update this entry then.
+  gemini/gemini-3.5-flash-lite:
+    input_per_mtok: 0.30
+    output_per_mtok: 2.50
+    source: https://ai.google.dev/gemini-api/docs/pricing
+    verified_on: 2026-09-29
+    notes: Pricing page and model page disagree on context caching; no cached rate modelled.

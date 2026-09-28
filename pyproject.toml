@@ -1,0 +1,59 @@
+[project]
+name = "triagelab"
+version = "0.1.0"
+description = "Eval-driven GitHub issue triage: a typed decision layer, an LLM agent with MCP tools and Agent Skills, and every design choice measured."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.27.2",
+]
+
+[project.scripts]
+triagelab = "triagelab.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # bugbear
+    "UP",      # pyupgrade
+    "SIM",     # simplify
+    "C4",      # comprehensions
+    "N",       # naming
+    "PTH",     # pathlib over os.path
+    "PT",      # pytest style
+    "RUF",     # ruff-specific
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src"]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "your_turn: a YOUR TURN exercise; xfails until the stub is implemented (run with -m your_turn --runxfail to see it fail)",
+]

@@ -12,16 +12,16 @@ from triagelab.cost import (
     ModelPrice,
     PriceTable,
     UnknownModelPriceError,
-    Usage,
 )
 from triagelab.ledger import SpendLedger
 from triagelab.llm_client import (
-    Completion,
     LLMClient,
     LLMRequest,
     Message,
     prompt_tokens_upper_bound,
 )
+
+from .fakes import FakeBackend
 
 MODEL = "fake/model"
 PRICES = PriceTable(
@@ -31,35 +31,6 @@ PRICES = PriceTable(
         )
     }
 )
-
-
-class RateLimitedError(Exception):
-    pass
-
-
-class FakeBackend:
-    """Deterministic stand-in for a provider: no network, no money."""
-
-    def __init__(self, text: str = "hello", fail_first: int = 0) -> None:
-        self.text = text
-        self.fail_first = fail_first
-        self.calls = 0
-
-    def complete(self, request: LLMRequest, *, timeout_s: float) -> Completion:
-        self.calls += 1
-        if self.calls <= self.fail_first:
-            raise RateLimitedError("429")
-        return Completion(
-            text=self.text,
-            resolved_model="fake-model-2026-09-01",
-            usage=Usage(tokens_in=1000, tokens_out=100),
-        )
-
-    def is_retryable(self, err: Exception) -> bool:
-        return isinstance(err, RateLimitedError)
-
-    def retry_after_s(self, err: Exception) -> float | None:
-        return None
 
 
 def _client(

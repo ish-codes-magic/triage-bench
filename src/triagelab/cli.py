@@ -5,19 +5,23 @@ function from the library. No business logic lives here, so everything the CLI d
 is also reachable (and testable) from Python.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 import yaml
+from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict
 
-from triagelab import __version__
+from triagelab import __version__, wiring
 from triagelab.config import load_config
-from triagelab.eval.registry import list_runs
+from triagelab.cost import BudgetExceededError
+from triagelab.eval.registry import create_run, git_info, list_runs, write_cost
 from triagelab.ledger import SpendLedger
+from triagelab.llm_client import LLMRequest, Message
 
 DEFAULT_CONFIG = Path("configs/base.yaml")
-LEDGER_FILENAME = "spend_ledger.jsonl"
 
 ConfigOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to a YAML config.")]
 
@@ -28,8 +32,10 @@ app = typer.Typer(
 )
 config_app = typer.Typer(help="Inspect configuration.", no_args_is_help=True)
 runs_app = typer.Typer(help="Inspect the run registry.", no_args_is_help=True)
+llm_app = typer.Typer(help="Talk to models through the cached, budgeted client.")
 app.add_typer(config_app, name="config")
 app.add_typer(runs_app, name="runs")
+app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
 
 @app.callback()
@@ -61,10 +67,72 @@ def runs_list(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     for run in runs:
         cost = run.cost
         cost_text = (
-            f"${cost.cost_usd:.4f}  calls={cost.calls} cache_hits={cost.cache_hits}"
+            f"${cost.cost_usd:.6f}  calls={cost.calls} cache_hits={cost.cache_hits}"
             if cost
             else "(no cost recorded)"
         )
         typer.echo(f"{run.manifest.run_id}  {run.manifest.git_sha[:12]:<12}  {cost_text}")
-    spent = SpendLedger(cfg.paths.runs_dir / LEDGER_FILENAME).total_usd()
-    typer.echo(f"All-time spend: ${spent:.4f} of ${cfg.budget.usd_total:.2f}")
+    spent = SpendLedger(cfg.paths.ledger_file).total_usd()
+    typer.echo(f"All-time spend: ${spent:.6f} of ${cfg.budget.usd_total:.2f}")
+
+
+class Pong(BaseModel):
+    """The schema `llm ping` asks for, so the smoke test exercises structured output too."""
+
+    model_config = ConfigDict(extra="forbid")  # emits additionalProperties: false (strict mode)
+
+    reply: str
+
+
+PING_PROMPT = 'This is a connectivity check. Respond with the JSON object {"reply": "pong"}.'
+
+
+@llm_app.command("ping")
+def llm_ping(
+    config: ConfigOpt = DEFAULT_CONFIG,
+    model: Annotated[str | None, typer.Option(help="Override llm.model for this call.")] = None,
+) -> None:
+    """Make one structured model call through the full stack and record it as a run.
+
+    Run it twice: the second call is served from the cache and costs $0.
+    """
+    load_dotenv()  # API keys live in .env (gitignored), never in config
+    cfg = load_config(config)
+    if model is not None:
+        cfg = cfg.model_copy(update={"llm": cfg.llm.model_copy(update={"model": model})})
+
+    run_dir, manifest = create_run(
+        cfg,
+        runs_dir=cfg.paths.runs_dir,
+        command="llm ping",
+        now=datetime.now(UTC),
+        git=git_info(Path.cwd()),
+    )
+    client = wiring.build_llm_client(cfg, run_id=manifest.run_id)
+    request = LLMRequest(
+        model=cfg.llm.model,
+        messages=(Message(role="user", content=PING_PROMPT),),
+        max_tokens=cfg.llm.max_tokens,
+        temperature=cfg.llm.temperature,
+        seed=cfg.llm.seed,
+    )
+    try:
+        pong, response = client.complete_structured(request, Pong)
+    except BudgetExceededError as err:
+        typer.echo(f"Budget stop: {err}", err=True)
+        raise typer.Exit(code=2) from err
+    finally:
+        write_cost(run_dir, client.stats)  # every run records its cost, even a failed one
+
+    source = "cache hit" if response.cache_hit else "live call"
+    spent_total = SpendLedger(cfg.paths.ledger_file).total_usd()
+    typer.echo(f"run       {manifest.run_id}")
+    typer.echo(f"model     {response.model} -> {response.resolved_model or 'unknown'}")
+    typer.echo(f"reply     {pong.reply}")
+    typer.echo(f"tokens    in={response.usage.tokens_in} out={response.usage.tokens_out}")
+    typer.echo(
+        f"cost      ${response.cost_usd:.6f} ({source}; "
+        f"originally ${response.original_cost_usd:.6f})"
+    )
+    typer.echo(f"latency   {response.latency_ms} ms")
+    typer.echo(f"spend     all-time ${spent_total:.6f} of ${cfg.budget.usd_total:.2f}")

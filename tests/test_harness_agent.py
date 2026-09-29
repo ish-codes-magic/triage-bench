@@ -8,7 +8,7 @@ import pytest
 
 from triagelab.config import AgentConfig, LLMConfig
 from triagelab.data.snapshot import to_snapshot
-from triagelab.harness.agent import AgentTriager
+from triagelab.harness.agent import AgentAnswer, AgentTriager
 from triagelab.harness.mcp_client import McpSession
 from triagelab.harness.tracing import RunTracer
 from triagelab.llm_client import ToolCall
@@ -144,3 +144,13 @@ def test_unknown_tool_names_in_the_config_fail_fast(tmp_path: Path) -> None:
             tracer=RunTracer(run_id="r", jsonl_path=None),
             max_body_chars=100,
         )
+
+
+@pytest.mark.parametrize("spelled", ["None", "null", " ", None])
+def test_null_duplicate_may_be_spelled_as_text(spelled: object) -> None:
+    answer = AgentAnswer.model_validate({**ANSWER, "duplicate_of": spelled})
+    assert answer.duplicate_of is None
+
+
+def test_a_real_number_as_text_still_parses() -> None:
+    assert AgentAnswer.model_validate({**ANSWER, "duplicate_of": "12"}).duplicate_of == 12

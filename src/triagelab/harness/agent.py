@@ -10,7 +10,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from triagelab.config import AgentConfig, LLMConfig
 from triagelab.data.models import IssueSnapshot
@@ -65,6 +65,15 @@ class AgentAnswer(BaseModel):
         default_factory=list[str], description="GitHub handles from get_codeowners, if any."
     )
     triage_comment: str = Field(description="1-3 sentences a maintainer could post.")
+
+    @field_validator("duplicate_of", mode="before")
+    @classmethod
+    def _null_spelled_as_text(cls, value: object) -> object:
+        # Seen in the first real runs: Qwen writes "duplicate_of": "None" (a string) when
+        # it means null, and each one cost a validation round-trip.
+        if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
+            return None
+        return value
 
 
 SYSTEM_PROMPT = """You triage GitHub issues for the {repo} repository, like an experienced \

@@ -5,6 +5,7 @@ everything already on disk. Adaptive: a batch that keeps failing (GitHub returns
 queries that are too expensive) is split in half and retried, down to single issues.
 """
 
+import json
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -48,6 +49,19 @@ class CollectSummary(BaseModel):
 def raw_paths(data_dir: Path, profile: RepoProfile) -> tuple[Path, Path]:
     base = data_dir / "raw" / profile.slug
     return base / "issues.jsonl", base / "pr_files.jsonl"
+
+
+def index_history_path(data_dir: Path, profile: RepoProfile) -> Path:
+    """Retrieval-only history older than the dataset window. Never enters a split."""
+    return data_dir / "raw" / profile.slug / "index_history.jsonl"
+
+
+def numbers_on_disk(path: Path) -> set[int]:
+    """Issue numbers already collected, without building full records (memory-light)."""
+    if not path.exists():
+        return set()
+    with path.open(encoding="utf-8") as f:
+        return {int(json.loads(line)["number"]) for line in f if line.strip()}
 
 
 def enumerate_issue_numbers(
@@ -124,6 +138,50 @@ def _chunks(items: list[int], size: int) -> Iterator[list[int]]:
         yield items[i : i + size]
 
 
+def collect_window(
+    client: QueryClient,
+    repo: str,
+    start: date,
+    end: date,
+    issues_path: Path,
+    *,
+    log: Log,
+    batch_size: int = 25,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> tuple[int, int, int]:
+    """Collect issues created in [start, end] into `issues_path`; returns (found, new, missing)."""
+    log(f"enumerating {repo} issues created {start}..{end}")
+    numbers = enumerate_issue_numbers(client, repo, start, end, log)
+    done = numbers_on_disk(issues_path)
+    todo = [n for n in numbers if n not in done]
+    log(f"{len(numbers)} issues found, {len(done)} already on disk, {len(todo)} to fetch")
+    new = missing = 0
+    for i, batch in enumerate(_chunks(todo, batch_size), start=1):
+        issues, gone = fetch_issues(client, repo, batch, now())
+        new += append_jsonl(issues_path, issues)
+        missing += len(gone)
+        if i % 10 == 0 or new + missing == len(todo):
+            log(f"  issues {new + missing}/{len(todo)}  (points used: {client.points_used})")
+    return len(numbers), new, missing
+
+
+def collect_index_history(
+    client: QueryClient, profile: RepoProfile, data_dir: Path, *, log: Log
+) -> tuple[int, int, int]:
+    """Collect [index_start, history_start) for retrieval only (no splits, no PR files)."""
+    w = profile.windows
+    if w.index_start is None:
+        raise ValueError(f"{profile.repo} profile sets no windows.index_start")
+    return collect_window(
+        client,
+        profile.repo,
+        w.index_start,
+        w.history_start - timedelta(days=1),
+        index_history_path(data_dir, profile),
+        log=log,
+    )
+
+
 def collect_repo(
     client: QueryClient,
     profile: RepoProfile,
@@ -135,22 +193,16 @@ def collect_repo(
 ) -> CollectSummary:
     issues_path, prs_path = raw_paths(data_dir, profile)
     windows = profile.windows
-
-    log(f"enumerating {profile.repo} issues created {windows.history_start}..{windows.eval_end}")
-    numbers = enumerate_issue_numbers(
-        client, profile.repo, windows.history_start, windows.eval_end, log
+    found, new, missing = collect_window(
+        client,
+        profile.repo,
+        windows.history_start,
+        windows.eval_end,
+        issues_path,
+        log=log,
+        batch_size=batch_size,
+        now=now,
     )
-    done = {issue.number for issue in read_jsonl(issues_path, RawIssue)}
-    todo = [n for n in numbers if n not in done]
-    log(f"{len(numbers)} issues found, {len(done)} already on disk, {len(todo)} to fetch")
-
-    new = missing = 0
-    for i, batch in enumerate(_chunks(todo, batch_size), start=1):
-        issues, gone = fetch_issues(client, profile.repo, batch, now())
-        new += append_jsonl(issues_path, issues)
-        missing += len(gone)
-        if i % 10 == 0 or new + missing == len(todo):
-            log(f"  issues {new + missing}/{len(todo)}  (points used: {client.points_used})")
 
     all_issues = read_jsonl(issues_path, RawIssue)
     wanted = sorted({pr for issue in all_issues for pr in fix_prs(issue, profile)})
@@ -163,7 +215,7 @@ def collect_repo(
 
     summary = CollectSummary(
         repo=profile.repo,
-        issues_found=len(numbers),
+        issues_found=found,
         issues_new=new,
         issues_missing=missing,
         prs_new=prs_new,

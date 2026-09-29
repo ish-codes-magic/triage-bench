@@ -4,6 +4,7 @@ repo: python/cpython
 
 windows:
   history_start: 2025-05-19   # 12 months of train split + retrieval history; may predate model cutoffs (approved 2026-09-29)
+  index_start: 2024-01-01     # retrieval-only history: half of duplicate originals predate history_start (M3)
   eval_start: 2026-05-19      # after GPT-6 Luna's stated cutoff (2026-05-18); Qwen3.5 released earlier
   test_start: 2026-07-19      # dev = [2026-05-19, 2026-07-19), test = [2026-07-19, 2026-08-18]
   eval_end: 2026-08-18        # collected 2026-09-29, minus 6 weeks for labels/closures to settle

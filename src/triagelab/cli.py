@@ -151,9 +151,15 @@ DataDirOpt = Annotated[Path, typer.Option("--data-dir", help="Root of the local 
 
 
 @data_app.command("collect")
-def data_collect(profile: ProfileOpt, data_dir: DataDirOpt = Path("data")) -> None:
+def data_collect(
+    profile: ProfileOpt,
+    data_dir: DataDirOpt = Path("data"),
+    index_history: Annotated[
+        bool, typer.Option("--index-history", help="Collect retrieval-only history (index_start).")
+    ] = False,
+) -> None:
     """Collect a repo's issue histories and fixing-PR files (resumable, rate-limit aware)."""
-    from triagelab.data.collect import collect_repo
+    from triagelab.data.collect import collect_index_history, collect_repo
     from triagelab.data.github import GraphQLClient
     from triagelab.data.profile import load_profile
 
@@ -163,7 +169,12 @@ def data_collect(profile: ProfileOpt, data_dir: DataDirOpt = Path("data")) -> No
         typer.echo("GITHUB_TOKEN is not set (see .env.example).", err=True)
         raise typer.Exit(code=2)
     client = GraphQLClient(token, retry=RetryConfig(max_attempts=5, max_delay_s=60))
-    summary = collect_repo(client, load_profile(profile), data_dir, log=typer.echo)
+    repo_profile = load_profile(profile)
+    if index_history:
+        found, new, missing = collect_index_history(client, repo_profile, data_dir, log=typer.echo)
+        typer.echo(f"index history: {found} found, {new} new, {missing} missing")
+        return
+    summary = collect_repo(client, repo_profile, data_dir, log=typer.echo)
     typer.echo(summary.model_dump_json(indent=2))
 
 

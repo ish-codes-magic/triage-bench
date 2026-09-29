@@ -5,7 +5,14 @@ from typing import Any
 
 import pytest
 
-from triagelab.data.collect import collect_repo, enumerate_issue_numbers, fetch_issues, raw_paths
+from triagelab.data.collect import (
+    collect_index_history,
+    collect_repo,
+    enumerate_issue_numbers,
+    fetch_issues,
+    index_history_path,
+    raw_paths,
+)
 from triagelab.data.github import GraphQLResult, TransientGitHubError
 from triagelab.data.models import PRFiles, RawIssue
 from triagelab.data.profile import load_profile
@@ -104,3 +111,12 @@ def test_collect_is_resumable_and_skips_deleted_issues(tmp_path: Path) -> None:
     # Fixture issues all link the fixture's merged main-branch PR "gh-1000:"... but only
     # issue 1000 matches its own number, so no PR qualifies here.
     assert read_jsonl(prs_path, PRFiles) == []
+
+
+def test_index_history_is_collected_separately_from_the_dataset(tmp_path: Path) -> None:
+    gh = FakeGitHub(60, base=date(2024, 3, 1))  # issues fall before history_start
+    found, new, _ = collect_index_history(gh, PROFILE, tmp_path, log=lambda _: None)
+    assert new == found > 0
+    assert index_history_path(tmp_path, PROFILE).is_file()
+    issues_path, _ = raw_paths(tmp_path, PROFILE)
+    assert not issues_path.exists()  # the dataset file is untouched

@@ -22,12 +22,18 @@ class Windows(_Strict):
     """Issue creation-date windows (inclusive dates, UTC)."""
 
     history_start: date = Field(description="Oldest issue collected (train + retrieval history).")
+    index_start: date | None = Field(
+        default=None,
+        description="Optional older start for retrieval-only history (never in any split).",
+    )
     eval_start: date = Field(description="First dev/test issue: after every model's cutoff.")
     test_start: date = Field(description="Dev is [eval_start, test_start); test is the rest.")
     eval_end: date = Field(description="Last dev/test issue: leaves time for labels to settle.")
 
     @model_validator(mode="after")
     def _ordered(self) -> Self:
+        if self.index_start is not None and not self.index_start < self.history_start:
+            raise ValueError("windows must satisfy index_start < history_start")
         if not self.history_start < self.eval_start < self.test_start <= self.eval_end:
             raise ValueError(
                 "windows must satisfy history_start < eval_start < test_start <= eval_end"

@@ -8,7 +8,9 @@ For the MCP Inspector (Node >= 22.19):
 """
 
 import argparse
+import os
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 from triagelab.data.checkout import CheckoutInfo, checkout_dir
@@ -18,6 +20,7 @@ from triagelab.mcp_server.codeowners import CodeOwners
 from triagelab.mcp_server.server import RepoIntel, build_server
 from triagelab.retrieval.dense import Encoder
 from triagelab.retrieval.index import load_searcher
+from triagelab.retrieval.search import HybridSearcher
 
 
 def load_intel(
@@ -28,12 +31,15 @@ def load_intel(
     as_of_ceiling: datetime | None = None,
 ) -> RepoIntel:
     profile = load_profile(profile_path)
-    encoder: Encoder | None = None
-    if dense:
-        from triagelab.retrieval.encoders import FastEmbedEncoder
 
-        encoder = FastEmbedEncoder()
-    searcher = load_searcher(data_dir, profile, encoder=encoder)
+    def build_searcher() -> HybridSearcher:
+        encoder: Encoder | None = None
+        if dense:
+            from triagelab.retrieval.encoders import FastEmbedEncoder
+
+            encoder = FastEmbedEncoder()
+        return load_searcher(data_dir, profile, encoder=encoder)
+
     root = checkout_dir(data_dir, profile)
     info_path = root / "checkout.json"
     commit = (
@@ -43,7 +49,7 @@ def load_intel(
     )
     return RepoIntel(
         profile=profile,
-        searcher=searcher,
+        searcher=build_searcher,  # built lazily on the first search (see RepoIntel)
         code=CodeSearcher(root) if root.is_dir() else None,
         owners=CodeOwners.from_checkout(root) if root.is_dir() else CodeOwners([]),
         checkout_commit=commit,
@@ -52,10 +58,24 @@ def load_intel(
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Every option can also come from the environment, so launchers that take no
+    # arguments (e.g. the MCP Inspector, IDE configs) can configure the server.
+    env = partial(os.environ.get)
     parser = argparse.ArgumentParser(prog="repo-intel", description=__doc__)
-    parser.add_argument("-p", "--profile", type=Path, required=True)
-    parser.add_argument("--data-dir", type=Path, default=Path("data"))
-    parser.add_argument("--no-dense", action="store_true", help="BM25 only (no model load).")
+    parser.add_argument(
+        "-p",
+        "--profile",
+        type=Path,
+        default=env("REPO_INTEL_PROFILE"),
+        required=env("REPO_INTEL_PROFILE") is None,
+    )
+    parser.add_argument("--data-dir", type=Path, default=Path(env("REPO_INTEL_DATA_DIR", "data")))
+    parser.add_argument(
+        "--no-dense",
+        action="store_true",
+        default=env("REPO_INTEL_DENSE", "1") == "0",
+        help="BM25 only (no model load). Env: REPO_INTEL_DENSE=0.",
+    )
     parser.add_argument(
         "--as-of-ceiling",
         type=datetime.fromisoformat,

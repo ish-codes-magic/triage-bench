@@ -142,3 +142,21 @@ async def test_invalid_arguments_are_rejected_by_schema(intel: RepoIntel) -> Non
         intel, "search_similar_issues", {"query": "x", "as_of": "2026-01-01T00:00:00Z", "k": 500}
     )
     assert result.is_error  # k is capped at 20 by the tool schema
+
+
+async def test_searcher_is_built_lazily_and_once(intel: RepoIntel) -> None:
+    built: list[int] = []
+    real = intel.searcher
+
+    def factory() -> HybridSearcher:
+        built.append(1)
+        return real
+
+    lazy = RepoIntel(profile=PROFILE, searcher=factory)
+    async with Client(build_server(lazy)) as client:
+        await client.list_tools()
+        assert built == []  # the handshake and tools/list never build the index
+        as_of = real.corpus.issues[2].created_at.isoformat()
+        await client.call_tool("search_similar_issues", {"query": "zipfile", "as_of": as_of})
+        await client.call_tool("search_similar_issues", {"query": "asyncio", "as_of": as_of})
+    assert built == [1]

@@ -17,7 +17,10 @@ Tool descriptions are prompts written for a model; changing one changes behaviou
 set is versioned by TOOLS_VERSION.
 """
 
+import inspect
 import re
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -97,24 +100,40 @@ class Components(BaseModel):
 
 
 class RepoIntel:
-    """Everything the tools read. Built once; every tool call is a pure lookup."""
+    """Everything the tools read. Built once; every tool call is a pure lookup.
+
+    The searcher may be given as a factory: building it (loading ~12k issues and indexing
+    them) takes longer than MCP clients wait for the initial handshake, so the server
+    answers initialize/tools/list immediately and pays that cost on the first search.
+    """
 
     def __init__(
         self,
         *,
         profile: RepoProfile,
-        searcher: HybridSearcher,
+        searcher: HybridSearcher | Callable[[], HybridSearcher],
         code: CodeSearcher | None = None,
         owners: CodeOwners | None = None,
         checkout_commit: str = "unknown",
         as_of_ceiling: datetime | None = None,
     ) -> None:
         self.profile = profile
-        self.searcher = searcher
+        self._searcher = searcher if isinstance(searcher, HybridSearcher) else None
+        self._factory = None if isinstance(searcher, HybridSearcher) else searcher
+        self._lock = threading.Lock()
         self.code = code
         self.owners = owners or CodeOwners([])
         self.checkout_commit = checkout_commit
         self.as_of_ceiling = as_of_ceiling
+
+    @property
+    def searcher(self) -> HybridSearcher:
+        if self._searcher is None:
+            with self._lock:
+                if self._searcher is None and self._factory is not None:
+                    self._searcher = self._factory()
+        assert self._searcher is not None
+        return self._searcher
 
     def check_as_of(self, as_of: datetime) -> datetime:
         aware = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
@@ -143,7 +162,12 @@ def build_server(intel: RepoIntel) -> MCPServer:
         ),
     )
 
-    @mcp.tool(annotations=READ_ONLY)
+    def tool[F: Callable[..., BaseModel]](fn: F) -> F:
+        # Docstrings are the tools' prompts; cleandoc strips their source indentation.
+        mcp.add_tool(fn, annotations=READ_ONLY, description=inspect.cleandoc(fn.__doc__ or ""))
+        return fn
+
+    @tool
     def search_similar_issues(
         query: Annotated[
             str,
@@ -178,7 +202,7 @@ def build_server(intel: RepoIntel) -> MCPServer:
             )
         return SimilarIssues(as_of=when, results=results)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @tool
     def get_issue(
         number: Annotated[int, Field(description="Issue number.")],
         as_of: Annotated[
@@ -206,7 +230,7 @@ def build_server(intel: RepoIntel) -> MCPServer:
             as_of=when,
         )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @tool
     def search_code(
         query: Annotated[
             str,
@@ -228,7 +252,7 @@ def build_server(intel: RepoIntel) -> MCPServer:
             checkout_commit=intel.checkout_commit, hits=hits, truncated=truncated
         )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @tool
     def get_codeowners(
         path: Annotated[
             str, Field(description="Repository-relative file path, e.g. 'Lib/asyncio/tasks.py'.")
@@ -238,7 +262,7 @@ def build_server(intel: RepoIntel) -> MCPServer:
         owners, pattern = intel.owners.owners_for(path)
         return Owners(path=path, owners=list(owners), matched_pattern=pattern)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @tool
     def list_components() -> Components:
         """The repository's components and the paths each covers. Use these names when
         deciding which part of the codebase an issue belongs to."""

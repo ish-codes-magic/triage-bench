@@ -8,7 +8,7 @@
 ![ruff](https://img.shields.io/badge/lint-ruff-informational)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Status: foundations complete (M0 of 10).** The results table, cascade curve and findings land from M2 onward. Nothing below is a claimed result yet, and negative results will be reported as prominently as positive ones.
+> **Status: foundations and dataset complete (M0–M1 of 10).** The results table, cascade curve and findings land from M2 onward. Nothing below is a claimed model result yet, and negative results will be reported as prominently as positive ones.
 
 ---
 
@@ -55,6 +55,25 @@ flowchart LR
 
   This is deliberate: the point is to understand what agent frameworks hide.
 
+## The dataset: CPython issues, exactly as they were opened
+
+5,476 [python/cpython](https://github.com/python/cpython) issues (May 2025 – Aug 2026), with silver ground truth for all four tasks. See the [dataset card](data/DATASET_CARD.md) and the [generated report](reports/data/python__cpython.md).
+
+- **Leakage, measured.**
+  - **70% of CPython issue bodies today name the PR that fixed them**: a bot appends a "Linked PRs" section after triage.
+  - Every snapshot is rebuilt from GitHub's edit history as of the moment the issue was opened: **0 of 5,476 snapshots contain that section.**
+  - A mutation test proves that no post-creation field can change what the model sees. It runs as its own CI check ("Leakage guard").
+- **Chosen by evidence.**
+  - The obvious candidate (transformers) looked 100% labelled, but only 3% of its recent issues had a label applied by a human triager; the rest came from issue templates.
+  - Repos were compared by *who applied each label*. → [ADR-0011](docs/DECISIONS.md#adr-0011-primary-repo-is-pythoncpython-chosen-by-label-provenance)
+- **Every label has provenance.**
+  - Each label is tagged as applied by the author, a triager or a bot.
+  - Duplicates record which evidence they came from.
+  - Components come from the fixing PRs' changed files, mapped with the maintainers' own area definitions.
+- **Small, honest samples.**
+  - dev 100 / test 50, split by time and stratified so rare cases (2.6% are duplicates) are present.
+  - Sampling weights let every metric also be reported at natural rates.
+
 ## Engineering highlights (built so far)
 
 - **A budget hard stop that can't be overshot.**
@@ -84,7 +103,7 @@ flowchart LR
 ## Roadmap
 
 - [x] **M0 Foundations:** config, cached and budgeted model client, run registry, CLI, hardened CI
-- [ ] **M1 Data:** collection, creation-time snapshots, ground-truth derivation, time splits, leakage tests
+- [x] **M1 Data:** collection, creation-time snapshots, ground-truth derivation, time splits, leakage tests
 - [ ] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
 - [ ] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
 - [ ] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
@@ -105,6 +124,10 @@ cp .env.example .env             # add OPENROUTER_API_KEY
 uv run triagelab llm ping        # one structured call: logged, costed, cached
 uv run triagelab llm ping        # the second one is a cache hit and costs $0
 uv run triagelab runs list       # run registry and all-time spend vs. budget
+
+# Dataset (needs GITHUB_TOKEN in .env; ~15 min, ~400 GraphQL points)
+uv run triagelab data collect -p configs/repos/python__cpython.yaml
+uv run triagelab data build   -p configs/repos/python__cpython.yaml
 ```
 
 Development:
@@ -118,8 +141,11 @@ uv run pytest
 
 ```
 configs/            base.yaml, prices.yaml (verified, cited), experiments/ (one YAML per ablation)
+configs/repos/      per-repo ground-truth rules (taxonomy, component map, windows)
 src/triagelab/      config · cost · cache · ledger · retry · llm_client · litellm_backend · wiring · cli
+  data/             GitHub collector · creation-time snapshots · ground truth · splits · report
   eval/             run registry (runner, metrics, calibration and judge arrive from M2)
+data/DATASET_CARD.md, reports/data/  dataset documentation and generated statistics
 docs/               DECISIONS.md (ADRs) · learning/ (one note per milestone)
 .github/            CI workflow, composite setup action, Dependabot
 tests/              unit and integration tests, offline by default

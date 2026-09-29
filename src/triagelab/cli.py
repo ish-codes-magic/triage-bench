@@ -164,3 +164,18 @@ def data_collect(profile: ProfileOpt, data_dir: DataDirOpt = Path("data")) -> No
     client = GraphQLClient(token, retry=RetryConfig(max_attempts=5, max_delay_s=60))
     summary = collect_repo(client, load_profile(profile), data_dir, log=typer.echo)
     typer.echo(summary.model_dump_json(indent=2))
+
+
+@data_app.command("build")
+def data_build(
+    profile: ProfileOpt,
+    data_dir: DataDirOpt = Path("data"),
+    reports_dir: Annotated[Path, typer.Option("--reports-dir")] = Path("reports"),
+) -> None:
+    """Build snapshots, silver labels, splits and the dataset report from raw data."""
+    from triagelab.data.build import build_dataset
+    from triagelab.data.profile import load_profile
+
+    paths = build_dataset(load_profile(profile), data_dir, reports_dir)
+    for name, path in paths.model_dump().items():
+        typer.echo(f"{name:12} {Path(path).as_posix()}")

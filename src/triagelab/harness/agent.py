@@ -18,7 +18,7 @@ from triagelab.data.profile import RepoProfile
 from triagelab.harness.budgets import BudgetTracker
 from triagelab.harness.loop import LoopOutcome, run_loop, submit_tool
 from triagelab.harness.mcp_client import McpSession, ToolInfo
-from triagelab.harness.tools import Tool, Toolbox, mcp_tools, skill_tools
+from triagelab.harness.tools import RepeatGuard, Tool, Toolbox, mcp_tools, skill_tools
 from triagelab.harness.tracing import RunTracer
 from triagelab.llm_client import LLMClient, LLMRequest, Message
 from triagelab.prompting import UNTRUSTED_ISSUE, issue_prompt
@@ -172,7 +172,8 @@ class AgentTriager:
         if self._mcp is not None:
             tools += mcp_tools(self._mcp, self._mcp_infos, {"as_of": issue.created_at.isoformat()})
         tools += skill_tools(self._skills, loaded)
-        return Toolbox(tools, max_result_chars=self._agent.max_tool_result_chars)
+        guard = RepeatGuard(self._agent.budget.max_tool_calls) if self._agent.repeat_guard else None
+        return Toolbox(tools, max_result_chars=self._agent.max_tool_result_chars, guard=guard)
 
     def triage(self, issue: IssueSnapshot) -> TriageResult:
         started = time.perf_counter()

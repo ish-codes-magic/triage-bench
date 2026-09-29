@@ -142,6 +142,9 @@ class AgentConfig(_Strict):
     # Approximate prompt size at which older tool results are elided (compaction).
     context_limit_tokens: int = Field(default=24_000, gt=0)
     max_validation_retries: int = Field(default=2, ge=0)
+    # Iteration 5: answer exact repeat calls from history, flag near-duplicate queries,
+    # and show the tool budget used after every result (harness/tools.py: RepeatGuard).
+    repeat_guard: bool = False
     mcp: McpConfig = McpConfig()
 
 

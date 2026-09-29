@@ -86,3 +86,44 @@ Reproduce any comparison with `triagelab compare <run_a> <run_b> [--exclude-erro
 - **Reasoning is the cheapest lever so far for a small model:** +0.10 micro-F1 for about a hundredth of a cent per issue.
 - **M4 default:** the agent runs with thinking on.
 - **The bar for M4:** the plain classifier is still as good on labels, so the agent must beat 0.71 micro-F1 *and* justify ~25 s and $0.0003+ per issue with what tools add: duplicates (T2) and components (T3).
+
+---
+
+## Iteration 3: a required field restores top-3 (and helps top-1)
+
+- **Date:** 2026-09-30 · **System:** agent (Qwen3.5-9B, thinking on, CPython skill, repo-intel over MCP)
+- **Runs:** A = `20260929-193240-agent-b2e7e0` (M4 agent v1, prompt v1), B = `20260929-213632-agent-11599c` (prompt v2)
+
+**Observation.**
+- In v1, `component_top3` in the `submit_triage` schema had a default.
+- The model omitted it on 77 of 100 issues, so the agent's "top-3" was really top-1.
+- It scored significantly *below* both baselines on top-3 accuracy (−0.15 vs. TF-IDF).
+
+**Change.** Make `component_top3` required, as in the single-shot schema. This is the only change: prompt version 2.
+
+**Result** (paired bootstrap, 100 issues, no errors in either run):
+
+| metric | v1 | v2 | Δ [95% CI] | |
+|---|---|---|---|---|
+| T3 top-3 accuracy | 0.796 | 0.944 | **+0.148 [+0.059, +0.250]** | significant |
+| T3 accuracy | 0.722 | 0.796 | **+0.074 [+0.017, +0.151]** | significant |
+| T1 micro-F1 | 0.717 | 0.743 | +0.026 [−0.017, +0.069] | no evidence |
+| T2 link F1 | 0.435 | 0.316 | −0.119 [−0.344, +0.084] | no evidence (about 13 duplicates) |
+| T4 F1 | 0.083 | 0.160 | +0.077 [−0.190, +0.340] | no evidence |
+
+**Behaviour** (`runs stats`):
+
+| | v1 | v2 |
+|---|---|---|
+| issues with 3 component candidates | 17 | 79 |
+| skill load rate | 1% | 2% |
+| answers forced by a budget | 53 | 55 |
+| issues with a validation error | 0 | 2 |
+
+**Caveats.**
+- **Different requests:** every request differs (the schema is in every call's tool list), so some of each delta is the model's different path, even at temperature 0.
+- **Provider overload:** DeepInfra's shared pool was overloaded for about 20 minutes during run B (`engine_overloaded`). 89 issues failed with 429s and were resumed after the agent's retry budget was raised (8 attempts, back-off up to 60 s). Resumed steps replay from the cache, so this didn't change any answer.
+
+**Takeaway.**
+- **Required fields beat optional ones:** a one-line schema fix turned the agent's worst metric (top-3) into its best (0.94, level with TF-IDF).
+- **Top-1 improved too.** Asking for ranked alternatives seems to make the first choice more deliberate, a cheap form of self-consistency.

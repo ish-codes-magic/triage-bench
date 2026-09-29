@@ -3,3 +3,4 @@ extends: ../base.yaml
 name: e1-llm-single-shot-thinking
 system: {kind: llm_single_shot}
 llm: {reasoning: default, max_tokens: 8000}
+eval: {concurrency: 4}  # 8 parallel calls hit OpenRouter 429s on this route

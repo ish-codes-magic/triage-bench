@@ -58,15 +58,18 @@ Give every confidence as a probability between 0 and 1. Reply with JSON only."""
 
 
 def _vocabulary(profile: RepoProfile, family_labels: Sequence[str]) -> str:
+    # Iteration 1 (docs/ITERATIONS.md): v1 printed "- area: stdlib, ..." and the model wrote
+    # "area-stdlib" on 57% of issues. Labels are now listed as exact strings to copy.
     tax = profile.taxonomy
     components = "\n".join(
         f"- {c.name}: files under {', '.join(c.prefixes)}" for c in profile.components
     )
     return (
-        "Allowed labels:\n"
-        f"- type: {', '.join(tax.type)}\n"
-        f"- area: {', '.join(tax.area)}\n"
-        f"- topic/OS: {', '.join(family_labels)}\n\n"
+        "Allowed labels. Copy them exactly as written; area labels have no prefix "
+        '(write "stdlib", never "area-stdlib").\n'
+        f"Type labels (pick one): {', '.join(tax.type)}\n"
+        f"Area labels (any that apply): {', '.join(tax.area)}\n"
+        f"Topic and OS labels (any that apply): {', '.join(family_labels)}\n\n"
         f"Components:\n{components}"
     )
 

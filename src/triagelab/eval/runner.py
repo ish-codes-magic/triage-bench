@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,7 +36,7 @@ from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_p
 from triagelab.eval.dataset import EvalExample, load_history, load_split
 from triagelab.eval.registry import create_run, git_info, write_cost
 from triagelab.eval.score import Scorecard, score
-from triagelab.llm_client import CallStats, LLMClient
+from triagelab.llm_client import CallStats, CassetteMissError, LLMClient
 from triagelab.triage import Triager, TriageResult
 
 TEST_EVALUATION_LIMIT = 2
@@ -92,6 +93,7 @@ class RunOutcome(BaseModel):
     total: int
     stopped_reason: str | None
     scorecard: Scorecard | None
+    spent_usd: float = 0.0  # money actually spent by this run (cache hits are free)
 
 
 def family_vocabulary(train: Sequence[EvalExample], min_count: int) -> list[str]:
@@ -106,7 +108,15 @@ def family_vocabulary(train: Sequence[EvalExample], min_count: int) -> list[str]
     return sorted(lab for lab, c in counts.items() if c >= min_count)
 
 
-def build_triager(cfg: Config, profile: RepoProfile, client: Callable[[], LLMClient]) -> Triager:
+def build_triager(
+    cfg: Config,
+    profile: RepoProfile,
+    client: Callable[[], LLMClient],
+    *,
+    run_id: str,
+    run_dir: Path,
+    stack: ExitStack,
+) -> Triager:
     if cfg.system is None:
         raise ValueError(f"Config {cfg.name!r} has no `system:` section; use an experiment config.")
     data_dir = cfg.dataset.data_dir
@@ -117,6 +127,20 @@ def build_triager(cfg: Config, profile: RepoProfile, client: Callable[[], LLMCli
     if kind == "classifier":
         return ClassifierTriager(
             train, load_history(data_dir, profile), min_label_count=cfg.system.min_label_count
+        )
+    if cfg.system.agent is not None:  # kind == "agent" (the config validator pairs them)
+        from triagelab.harness.factory import build_agent  # MCP/OTel imports only when needed
+
+        return build_agent(
+            cfg,
+            cfg.system.agent,
+            profile,
+            family_vocabulary(train, cfg.system.min_label_count),
+            client(),
+            max_body_chars=cfg.system.max_body_chars,
+            run_id=run_id,
+            run_dir=run_dir,
+            stack=stack,
         )
     return LLMSingleShotTriager(
         client(),
@@ -138,8 +162,8 @@ def _timed(triager: Triager, example: EvalExample, run_id: str) -> TriageResult:
     started = time.perf_counter()
     try:
         result = triager.triage(example.snapshot)
-    except BudgetExceededError:
-        raise
+    except (BudgetExceededError, CassetteMissError):
+        raise  # stop the run: retrying can't help, and CI must fail loudly
     except Exception as err:  # one bad issue must not sink the run
         # Anything *raised* by a system is infrastructure (network, rate limit), not a model
         # answer. Marked so a resume or the retry pass can re-run it instead of scoring it.
@@ -185,7 +209,8 @@ def run_eval(
             details={
                 "split": split,
                 "system": cfg.system.kind,
-                "model": cfg.llm.model if cfg.system.kind == "llm_single_shot" else "-",
+                "model": cfg.llm.model if cfg.system.kind in ("llm_single_shot", "agent") else "-",
+                "skills": ",".join(cfg.system.agent.skills) if cfg.system.agent else "-",
                 "dataset_hash": _dataset_hash(cfg, profile),
                 "issues": str(len(examples)),
             },
@@ -200,44 +225,45 @@ def run_eval(
 
     kind = cfg.system.kind if cfg.system else "?"
     log(f"run {run_id}: building {kind} on {split} ({len(examples)} issues)")
-    triager = build_triager(cfg, profile, client)
+    with ExitStack() as stack:  # agent resources: the MCP server process, trace export
+        triager = build_triager(cfg, profile, client, run_id=run_id, run_dir=run_dir, stack=stack)
 
-    predictions_path = run_dir / "predictions.jsonl"
-    # Later lines win, so a re-run issue replaces its earlier (failed) attempt.
-    done = {p.issue_ref: p for p in read_jsonl(predictions_path, TriageResult)}
-    todo = [e for e in examples if _needs_run(done.get(e.snapshot.issue_ref))]
-    stopped: str | None = None
-    write_lock = threading.Lock()
+        predictions_path = run_dir / "predictions.jsonl"
+        # Later lines win, so a re-run issue replaces its earlier (failed) attempt.
+        done = {p.issue_ref: p for p in read_jsonl(predictions_path, TriageResult)}
+        todo = [e for e in examples if _needs_run(done.get(e.snapshot.issue_ref))]
+        stopped: str | None = None
+        write_lock = threading.Lock()
 
-    def triage_all(batch: list[EvalExample], workers: int) -> str | None:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            pending: set[Future[TriageResult]] = {
-                pool.submit(_timed, triager, e, run_id) for e in batch
-            }
-            finished = 0
-            while pending:
-                complete, pending = wait(pending, return_when=FIRST_COMPLETED)
-                for future in complete:
-                    try:
-                        result = future.result()
-                    except BudgetExceededError as err:
-                        for f in pending:
-                            f.cancel()
-                        return f"budget: {err}"
-                    with write_lock:
-                        append_jsonl(predictions_path, [result])
-                        done[result.issue_ref] = result
-                    finished += 1
-                    if finished % 10 == 0 or finished == len(batch):
-                        log(f"  {finished}/{len(batch)} issues")
-        return None
+        def triage_all(batch: list[EvalExample], workers: int) -> str | None:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                pending: set[Future[TriageResult]] = {
+                    pool.submit(_timed, triager, e, run_id) for e in batch
+                }
+                finished = 0
+                while pending:
+                    complete, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in complete:
+                        try:
+                            result = future.result()
+                        except BudgetExceededError as err:
+                            for f in pending:
+                                f.cancel()
+                            return f"budget: {err}"
+                        with write_lock:
+                            append_jsonl(predictions_path, [result])
+                            done[result.issue_ref] = result
+                        finished += 1
+                        if finished % 10 == 0 or finished == len(batch):
+                            log(f"  {finished}/{len(batch)} issues")
+            return None
 
-    stopped = triage_all(todo, cfg.eval.concurrency)
-    retry = [e for e in examples if _needs_run(done.get(e.snapshot.issue_ref))]
-    if stopped is None and retry:
-        # One slower pass for infrastructure failures (usually provider rate limits).
-        log(f"retrying {len(retry)} infrastructure failures with 1 worker")
-        stopped = triage_all(retry, 1)
+        stopped = triage_all(todo, cfg.eval.concurrency)
+        retry = [e for e in examples if _needs_run(done.get(e.snapshot.issue_ref))]
+        if stopped is None and retry:
+            # One slower pass for infrastructure failures (usually provider rate limits).
+            log(f"retrying {len(retry)} infrastructure failures with 1 worker")
+            stopped = triage_all(retry, 1)
 
     stats = clients[0].stats if clients else CallStats()
     write_cost(run_dir, stats)
@@ -270,4 +296,5 @@ def run_eval(
         total=len(examples),
         stopped_reason=stopped,
         scorecard=card,
+        spent_usd=stats.cost_usd,
     )

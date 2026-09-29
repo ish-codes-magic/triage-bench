@@ -12,7 +12,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from triagelab.cache import DiskCache
 from triagelab.config import ProviderRoute, ReasoningEffort, RetryConfig
@@ -30,11 +36,48 @@ _PROMPT_OVERHEAD_TOKENS = 1_000
 _PER_MESSAGE_OVERHEAD_TOKENS = 16
 
 
+def _omit_empty(data: dict[str, Any], *keys: str) -> dict[str, Any]:
+    """Drop optional tool fields while they are unused.
+
+    Tool calling was added after E1's responses were cached. Omitting the new fields
+    when empty keeps every tool-free request serializing, and so hashing, exactly as
+    before: old cache entries (and CI cassettes) stay valid.
+    """
+    return {k: v for k, v in data.items() if k not in keys or v not in (None, [], ())}
+
+
+class ToolSpec(BaseModel):
+    """A function the model may call: name, description and a JSON-schema for arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+class ToolCall(BaseModel):
+    """One call the model asked for. `arguments` stays the raw JSON text the model wrote,
+    so the harness can report a parse error back to it instead of losing the call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    name: str
+    arguments: str
+
+
 class Message(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
+    tool_calls: tuple[ToolCall, ...] = ()  # assistant turns that call tools
+    tool_call_id: str | None = None  # tool results: which call they answer
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return _omit_empty(handler(self), "tool_calls", "tool_call_id")
 
 
 class LLMRequest(BaseModel):
@@ -57,6 +100,13 @@ class LLMRequest(BaseModel):
     schema_name: str | None = None
     reasoning: ReasoningEffort = "default"
     sample: int = Field(default=0, ge=0)
+    tools: tuple[ToolSpec, ...] = ()
+    # None = provider default ("auto"); "none" = no tools; any other value forces that tool.
+    tool_choice: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return _omit_empty(handler(self), "tools", "tool_choice")
 
     def price_key(self) -> str:
         """The price-table key: the model, plus the pinned provider when there is one.
@@ -78,6 +128,8 @@ class Completion(BaseModel):
     resolved_model: str | None
     usage: Usage
     litellm_cost_usd: float | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
+    reasoning_text: str = ""  # the model's visible thinking, kept for traces
 
 
 class LLMResponse(BaseModel):
@@ -87,6 +139,8 @@ class LLMResponse(BaseModel):
     model: str
     resolved_model: str | None
     usage: Usage
+    tool_calls: tuple[ToolCall, ...] = ()
+    reasoning_text: str = ""
     cost_usd: float = Field(description="Money spent by *this* call: 0.0 on a cache hit.")
     original_cost_usd: float = Field(description="What the response cost when first produced.")
     cache_hit: bool
@@ -100,6 +154,30 @@ class CompletionBackend(Protocol):
     def retry_after_s(self, err: Exception) -> float | None: ...
 
 
+class CassetteMissError(RuntimeError):
+    """Replay-only mode found no recorded response for a request.
+
+    Deliberately not retryable and not an "infrastructure" failure: in CI it means a
+    prompt, schema or tool output changed, and the cassettes must be re-recorded.
+    """
+
+
+class ReplayOnlyBackend:
+    """The backend for replay-only runs: every call that reaches it is a cache miss."""
+
+    def complete(self, request: LLMRequest, *, timeout_s: float) -> Completion:
+        raise CassetteMissError(
+            f"no recorded response for request {request.cache_key()[:16]} "
+            f"({request.model}, {len(request.messages)} messages); re-record the cassettes"
+        )
+
+    def is_retryable(self, err: Exception) -> bool:
+        return False
+
+    def retry_after_s(self, err: Exception) -> float | None:
+        return None
+
+
 def prompt_tokens_upper_bound(request: LLMRequest) -> int:
     """A prompt-size bound that can only over-count, used by the budget check.
 
@@ -109,11 +187,19 @@ def prompt_tokens_upper_bound(request: LLMRequest) -> int:
     safety check, and it needs no tokenizer download, network, or provider-specific code.
     """
     text_bytes = sum(len(m.content.encode("utf-8")) for m in request.messages)
+    call_bytes = sum(
+        len(c.name.encode("utf-8")) + len(c.arguments.encode("utf-8"))
+        for m in request.messages
+        for c in m.tool_calls
+    )
     schema = request.response_schema
     schema_bytes = len(canonical_json(schema).encode("utf-8")) if schema else 0
+    tool_bytes = sum(len(canonical_json(t.model_dump()).encode("utf-8")) for t in request.tools)
     return (
         text_bytes
+        + call_bytes
         + schema_bytes
+        + tool_bytes
         + _PER_MESSAGE_OVERHEAD_TOKENS * len(request.messages)
         + _PROMPT_OVERHEAD_TOKENS
     )
@@ -231,6 +317,8 @@ class LLMClient:
             model=request.model,
             resolved_model=completion.resolved_model,
             usage=completion.usage,
+            tool_calls=completion.tool_calls,
+            reasoning_text=completion.reasoning_text,
             cost_usd=spent,
             original_cost_usd=spent,
             cache_hit=False,

@@ -1,8 +1,16 @@
 """A synthetic dataset for CI smoke evals: realistic structure, no GitHub or model access.
 
 `python -m tests.smoke_dataset <dir>` writes raw issues, builds them with the real
-pipeline, and writes experiment configs pointing at them. CI then runs the baselines
-through `triagelab eval` exactly as on real data, and posts the results table.
+pipeline, builds a BM25 retrieval corpus, and writes experiment configs pointing at
+them. CI then runs the baselines and the agent through `triagelab eval` exactly as on
+real data.
+
+The agent config replays recorded model responses (cassettes, `tests/cassettes/`) and
+fails on any request that wasn't recorded, so CI is free and deterministic. To record
+them again after a prompt, skill or tool change (needs OPENROUTER_API_KEY, ~5 cents):
+
+    uv run python -m tests.smoke_dataset smoke --record
+    uv run triagelab eval -c smoke/agent.yaml --split dev --limit 10
 """
 
 import sys
@@ -16,11 +24,14 @@ from triagelab.data.collect import raw_paths
 from triagelab.data.models import Actor, IssueRef, LabelEvent, LinkedPR, PRFiles, RawIssue
 from triagelab.data.profile import load_profile
 from triagelab.data.storage import append_jsonl
+from triagelab.retrieval.index import build_corpus_from_raw, corpus_path
 
 from .data_fixtures import raw
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = REPO_ROOT / "configs" / "repos" / "python__cpython.yaml"
+CASSETTES = REPO_ROOT / "tests" / "cassettes" / "agent-smoke"
+AGENT_ISSUES = 10  # how many dev issues the agent smoke eval covers
 TRIAGER = Actor(login="triager", is_bot=False)
 
 # component -> (vocabulary, type label, file path)
@@ -84,7 +95,7 @@ def _issue(n: int, created: datetime, comp: str, i: int) -> tuple[RawIssue, PRFi
     return issue, files
 
 
-def write_smoke_dataset(root: Path) -> dict[str, Path]:
+def write_smoke_dataset(root: Path, *, record: bool = False) -> dict[str, Path]:
     profile = load_profile(PROFILE_PATH)
     w = profile.windows
     starts = {
@@ -116,17 +127,27 @@ def write_smoke_dataset(root: Path) -> dict[str, Path]:
     append_jsonl(issues_path, issues)
     append_jsonl(prs_path, pr_files)
     build_dataset(profile, data_dir, root / "reports")
+    build_corpus_from_raw(data_dir, profile).save(corpus_path(data_dir, profile))
 
     configs: dict[str, Path] = {}
-    for kind in ("majority", "classifier"):
-        cfg = {
-            "extends": (REPO_ROOT / "configs" / "base.yaml").as_posix(),
+    for kind in ("majority", "classifier", "agent"):
+        # Replayed runs spend nothing; a recording run's spend must count against the
+        # project's all-time budget, so it uses the real ledger.
+        ledger = (
+            REPO_ROOT / "runs" / "spend_ledger.jsonl"
+            if kind == "agent" and record
+            else root / "runs" / "ledger.jsonl"
+        )
+        cfg: dict[str, object] = {
+            "extends": (REPO_ROOT / "configs" / "experiments" / "agent.yaml").as_posix()
+            if kind == "agent"
+            else (REPO_ROOT / "configs" / "base.yaml").as_posix(),
             "name": f"smoke-{kind}",
             "system": {"kind": kind, "min_label_count": 3},
             "paths": {
                 "runs_dir": (root / "runs").as_posix(),
                 "prices_file": (REPO_ROOT / "configs" / "prices.yaml").as_posix(),
-                "ledger_file": (root / "runs" / "ledger.jsonl").as_posix(),
+                "ledger_file": ledger.as_posix(),
             },
             "dataset": {
                 "profile": PROFILE_PATH.as_posix(),
@@ -135,6 +156,20 @@ def write_smoke_dataset(root: Path) -> dict[str, Path]:
             },
             "eval": {"concurrency": 2, "bootstrap_resamples": 200},
         }
+        if kind == "agent":
+            cfg["system"] = {
+                "kind": "agent",
+                "min_label_count": 3,
+                "agent": {
+                    "skills": ["triage-cpython"],
+                    "skills_dir": (REPO_ROOT / "skills").as_posix(),
+                    # No source checkout in CI, so no code search or CODEOWNERS.
+                    "tools": ["search_similar_issues", "get_issue", "list_components"],
+                    "budget": {"max_steps": 8, "max_tool_calls": 6},
+                    "mcp": {"transport": "stdio", "dense": False},
+                },
+            }
+            cfg["cache"] = {"dir": CASSETTES.as_posix(), "replay_only": not record}
         path = root / f"{kind}.yaml"
         path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
         configs[kind] = path
@@ -142,6 +177,7 @@ def write_smoke_dataset(root: Path) -> dict[str, Path]:
 
 
 if __name__ == "__main__":
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "smoke")
-    for kind, path in write_smoke_dataset(out).items():
+    args = [a for a in sys.argv[1:] if a != "--record"]
+    out = Path(args[0] if args else "smoke")
+    for kind, path in write_smoke_dataset(out, record="--record" in sys.argv).items():
         print(f"{kind}: {path.as_posix()}")

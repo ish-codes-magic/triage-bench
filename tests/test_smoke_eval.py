@@ -11,8 +11,8 @@ from .smoke_dataset import write_smoke_dataset
 def test_classifier_beats_majority_on_the_smoke_dataset(tmp_path: Path) -> None:
     configs = write_smoke_dataset(tmp_path)
     scores = {}
-    for kind, path in configs.items():
-        cfg = load_config(path)
+    for kind in ("majority", "classifier"):
+        cfg = load_config(configs[kind])
         outcome = run_eval(
             cfg, split="dev", runs_dir=cfg.paths.runs_dir, command="t", log=lambda _: None
         )

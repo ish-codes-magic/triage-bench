@@ -4,7 +4,16 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from triagelab.config import Config, LLMConfig, ProviderRoute, deep_merge, load_config
+from triagelab.config import (
+    AgentConfig,
+    CacheConfig,
+    Config,
+    LLMConfig,
+    ProviderRoute,
+    SystemConfig,
+    deep_merge,
+    load_config,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASE = REPO_ROOT / "configs" / "base.yaml"
@@ -104,3 +113,16 @@ def test_experiment_config_overrides_base(tmp_path: Path) -> None:
     assert cfg.name == "exp"
     assert cfg.llm.max_tokens == 64
     assert cfg.llm.model == load_config(BASE).llm.model  # inherited, not dropped
+
+
+def test_agent_kind_and_agent_block_go_together() -> None:
+    assert SystemConfig(kind="agent", agent=AgentConfig()).agent is not None
+    with pytest.raises(ValidationError, match=r"system.agent"):
+        SystemConfig(kind="agent")
+    with pytest.raises(ValidationError, match=r"system.agent"):
+        SystemConfig(kind="classifier", agent=AgentConfig())
+
+
+def test_replay_only_requires_the_cache() -> None:
+    with pytest.raises(ValidationError, match="replay_only"):
+        CacheConfig(enabled=False, replay_only=True)

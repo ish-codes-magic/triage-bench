@@ -166,6 +166,14 @@ def test_results_table_and_compare(workspace: Path) -> None:
     assert not any(r.significant for r in rows)
 
 
+def test_a_later_partial_run_does_not_replace_a_full_one(workspace: Path) -> None:
+    full = _run(_config(workspace, "majority", name="e-a"))
+    partial = _run(_config(workspace, "majority", name="e-a"), limit=2)  # e.g. a trace demo
+    table = results_table(load_scored_runs(workspace / "runs"), "dev")
+    assert full.run_id in table
+    assert partial.run_id not in table
+
+
 def test_infrastructure_failures_are_retried_not_scored(
     workspace: Path, fake_llm: FakeBackend
 ) -> None:

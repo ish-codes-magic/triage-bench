@@ -12,12 +12,18 @@ from triagelab.cost import (
     ModelPrice,
     PriceTable,
     UnknownModelPriceError,
+    Usage,
 )
 from triagelab.ledger import SpendLedger
 from triagelab.llm_client import (
+    CassetteMissError,
+    Completion,
     LLMClient,
     LLMRequest,
     Message,
+    ReplayOnlyBackend,
+    ToolCall,
+    ToolSpec,
     prompt_tokens_upper_bound,
 )
 
@@ -189,3 +195,78 @@ def test_routed_call_is_priced_by_route(tmp_path: Path) -> None:
     assert resp.cost_usd == pytest.approx(0.0011)
     with pytest.raises(UnknownModelPriceError):
         client.complete(_request(sample=1))  # the unrouted key has no price here
+
+
+# --- Tool calling -------------------------------------------------------------------------
+
+TOOL = ToolSpec(name="get_issue", description="d", parameters={"type": "object"})
+CALL = ToolCall(id="call_1", name="get_issue", arguments='{"number": 1}')
+
+
+def test_tool_free_cache_keys_did_not_change_when_tools_were_added() -> None:
+    # Pinned before tool calling existed: E1's cached responses must still be found.
+    request = LLMRequest(
+        model="openrouter/qwen/qwen3.5-9b",
+        route=ROUTE,
+        messages=(Message(role="system", content="s"), Message(role="user", content="hi")),
+        max_tokens=10,
+        temperature=0.0,
+        response_schema={"type": "object"},
+        schema_name="X",
+    )
+    assert request.cache_key() == "009baebe5b1541a85886633abca6f3bb1b166c98e190b23716dc414a6744a85f"
+
+
+def test_tools_and_tool_turns_are_part_of_the_cache_key() -> None:
+    plain = _request()
+    with_tools = plain.model_copy(update={"tools": (TOOL,)})
+    forced = with_tools.model_copy(update={"tool_choice": "get_issue"})
+    turn = Message(role="assistant", content="", tool_calls=(CALL,))
+    with_turn = with_tools.model_copy(update={"messages": (*plain.messages, turn)})
+    keys = {r.cache_key() for r in (plain, with_tools, forced, with_turn)}
+    assert len(keys) == 4
+
+
+def test_prompt_bound_counts_tool_schemas_and_call_arguments() -> None:
+    with_tools = _request().model_copy(update={"tools": (TOOL,)})
+    assert prompt_tokens_upper_bound(with_tools) > prompt_tokens_upper_bound(_request())
+    turn = Message(role="assistant", content="", tool_calls=(CALL,))
+    with_turn = with_tools.model_copy(update={"messages": (*with_tools.messages, turn)})
+    extra = prompt_tokens_upper_bound(with_turn) - prompt_tokens_upper_bound(with_tools)
+    assert extra >= len(CALL.name) + len(CALL.arguments)
+
+
+def test_tool_calls_and_reasoning_survive_the_cache(tmp_path: Path) -> None:
+    scripted = Completion(
+        text="",
+        resolved_model="fake",
+        usage=Usage(tokens_in=1000, tokens_out=100),
+        tool_calls=(CALL,),
+        reasoning_text="I should look it up.",
+    )
+    backend = FakeBackend(script=[scripted])
+    request = _request().model_copy(update={"tools": (TOOL,)})
+    first = _client(tmp_path, backend).complete(request)
+    replayed = _client(tmp_path, backend).complete(request)
+    assert backend.calls == 1
+    assert replayed.cache_hit
+    assert replayed.tool_calls == first.tool_calls == (CALL,)
+    assert replayed.reasoning_text == "I should look it up."
+
+
+def test_replay_only_answers_from_the_cache_and_fails_loudly_on_a_miss(tmp_path: Path) -> None:
+    recorded = _client(tmp_path, FakeBackend(text="recorded")).complete(_request())
+    replay = LLMClient(
+        backend=ReplayOnlyBackend(),
+        prices=PRICES,
+        guard=BudgetGuard(per_run_usd=1.0, total_usd=1.0, spent_before_run_usd=0.0),
+        ledger=SpendLedger(tmp_path / "ledger.jsonl"),
+        cache=DiskCache(tmp_path / "cache"),
+        run_id="replay",
+        retry=RetryConfig(max_attempts=3),
+        timeout_s=5.0,
+    )
+    assert replay.complete(_request()).text == recorded.text
+    with pytest.raises(CassetteMissError, match="re-record"):
+        replay.complete(_request(sample=1))
+    assert replay.stats.retries == 0  # a miss is never retried

@@ -2,14 +2,17 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
-from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
+from triagelab.baselines.llm_single_shot import LLMSingleShotTriager, build_messages
 from triagelab.config import LLMConfig, RetryConfig
 from triagelab.cost import BudgetGuard, ModelPrice, PriceTable
 from triagelab.data.models import IssueSnapshot
 from triagelab.data.profile import load_profile
+from triagelab.data.snapshot import to_snapshot
+from triagelab.hashing import stable_hash
 from triagelab.ledger import SpendLedger
 from triagelab.llm_client import LLMClient
 
+from .data_fixtures import raw
 from .fakes import FakeBackend
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -106,3 +109,12 @@ def test_issue_is_delimited_as_untrusted_data(tmp_path: Path) -> None:
         < user.content.index("Ignore previous instructions")
         < user.content.index("</issue>")
     )
+
+
+def test_prompt_bytes_are_pinned() -> None:
+    # The shared prompt pieces (triagelab/prompting.py) feed every cache key of E1. If
+    # this hash moves, the change must be deliberate: old cached answers stop matching.
+    snapshot = to_snapshot(raw())
+    messages = build_messages(snapshot, PROFILE, ["topic-asyncio", "OS-windows"], 12_000)
+    digest = stable_hash([m.model_dump() for m in messages])
+    assert digest == "8d54edb58d207f2aa5a2ffdf2d725b372fc4cd11a0b35a5421a28ce9857e815f"

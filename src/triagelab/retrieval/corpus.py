@@ -78,7 +78,12 @@ class Corpus:
     def get(self, number: int, as_of: datetime) -> IssueAsOf:
         issue = self._by_number.get(number)
         if issue is None or issue.created_at >= as_of:
-            raise NotVisibleError(f"#{number} is not visible as of {as_of.isoformat()}")
+            # One message for "later", "a PR" and "older than the index": telling them apart
+            # would reveal whether an issue exists in the future.
+            raise NotVisibleError(
+                f"#{number} is not available as of {as_of.isoformat()}: it was opened later, "
+                "is a pull request, or is older than the indexed history"
+            )
         return replay(issue, issue.title, issue.body, as_of)
 
     def save(self, path: Path) -> None:

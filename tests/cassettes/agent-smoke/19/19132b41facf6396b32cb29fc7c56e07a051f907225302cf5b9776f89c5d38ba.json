@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3778,
+  "tokens_out": 572,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 316
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-a1cab249ac89dcb3",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"type-crash\", \"confidence\": 0.99}, {\"label\": \"interpreter-core\", \"confidence\": 0.99}], \"component\": \"interpreter-core\", \"component_confidence\": 0.99, \"needs_info\": false, \"needs_info_confidence\": 0.99, \"duplicate_of\": 6, \"duplicate_confidence\": 0.98, \"duplicate_candidates\": [26], \"triage_comment\": \"This appears to be a duplicate of issue #6, which has the exact same title pattern and body text. The issue reports a segfault in a bytecode eval loop with refcount dealloc.\"}"
+  }
+ ],
+ "reasoning_text": "The issue I'm looking at is \"segfault problem 126\" with the body \"segfault refcount dealloc bytecode eval loop observed in scenario 0.\"\n\nLooking at the search results, I found issue #6 and #26 which have the exact same body text: \"segfault refcount dealloc bytecode eval loop observed in scenario 0.\"\n\nIssue #6 was created at 2025-05-19T05:00:00Z and issue #26 was created at 2025-05-20T01:00:00Z.\n\nThe current issue is \"segfault problem 126\" opened on 2026-05-19.\n\nThis appears to be a duplicate of issue #6 (or possibly #26, but #6 is the earlier one). The body text is identical, and the title follows the same pattern (segfault problem X).\n\nLet me check if there are any other issues with similar patterns to understand the full context. But based on what I've seen, this is clearly a duplicate of issue #6.\n\nFor the triage decision:\n- Type: type-crash (it's a segfault)\n- Area: interpreter-core (segfault in bytecode eval loop, refcount dealloc)\n- Component: interpreter-core (files under Objects/, Python/, Grammar/, Parser/, Include/)\n- Duplicate of: 6 (the earliest issue with the same content)\n- Duplicate confidence: high (0.95+) since the body text is identical\n- Needs info: No, this is a duplicate\n\nLet me submit the triage.\n\n",
+ "cost_usd": 0.00046360000000000005,
+ "original_cost_usd": 0.00046360000000000005,
+ "cache_hit": false,
+ "latency_ms": 85710,
+ "attempts": 1
+}

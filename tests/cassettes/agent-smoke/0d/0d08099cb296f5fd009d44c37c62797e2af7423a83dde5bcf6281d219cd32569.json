@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2999,
+  "tokens_out": 512,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 281
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-94abd870193e09bf",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"extension-modules\", \"confidence\": 0.95}, {\"label\": \"type-bug\", \"confidence\": 0.95}], \"component\": \"extension-modules\", \"component_confidence\": 0.95, \"needs_info\": true, \"needs_info_confidence\": 0.95, \"duplicate_of\": 7, \"duplicate_confidence\": 0.95, \"duplicate_candidates\": [3, 11, 19, 23, 27, 31, 35, 39, 47], \"triage_comment\": \"Issue appears to be a duplicate of #7 with identical text. The report is too vague to understand the actual problem - please provide a minimal reproducible example, expected vs actual behavior, and any error messages.\"}"
+  }
+ ],
+ "reasoning_text": "The issue text is extremely minimal and appears to be a template or placeholder. The search results show many similar issues with the same pattern (\"_sqlite3 problem X\" with \"scenario Y\"). Issue #7 has the exact same text as this issue.\n\nThis looks like a duplicate of issue #7 (or possibly one of the other similar issues). The text is identical: \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nLet me check a few more of these to understand the pattern better, but it seems like this is likely a duplicate of issue #7.\n\nGiven:\n- The issue text is identical to issue #7\n- The issue title follows the same pattern\n- No additional information is provided\n\nThis appears to be a duplicate. I should mark it as a duplicate of issue #7 with high confidence.\n\nFor the triage:\n- Type: type-bug (based on the existing labels on similar issues)\n- Area: extension-modules (since it's about _sqlite3 C module)\n- Component: extension-modules (Modules/ directory)\n- Duplicate of: 7\n- Needs info: True (the issue is too vague to understand what the actual problem is)\n\nLet me submit the triage.\n\n",
+ "cost_usd": 0.00037670000000000005,
+ "original_cost_usd": 0.00037670000000000005,
+ "cache_hit": false,
+ "latency_ms": 76809,
+ "attempts": 1
+}

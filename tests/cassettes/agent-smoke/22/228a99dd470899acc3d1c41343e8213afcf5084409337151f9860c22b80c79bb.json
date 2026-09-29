@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3011,
+  "tokens_out": 160,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 148
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-890b562fa1b761e1",
+   "name": "get_issue",
+   "arguments": "{\"number\": 41}"
+  }
+ ],
+ "reasoning_text": "The issue I'm looking at is \"asyncio problem 121\" with the body \"asyncio pathlib glob event loop task cancel observed in scenario 0. Cannot reproduce, version unknown.\"\n\nI found issue #21 which has the exact same title \"asyncio problem 21\" and body \"asyncio pathlib glob event loop task cancel observed in scenario 0.\"\n\nThis appears to be a duplicate - the issue text is identical except for the number in the title. The reporter says \"Cannot reproduce, version unknown\" which is the same pattern.\n\nLet me check a few more of these similar issues to understand the pattern better.\n\n",
+ "cost_usd": 0.00032510000000000004,
+ "original_cost_usd": 0.00032510000000000004,
+ "cache_hit": false,
+ "latency_ms": 21695,
+ "attempts": 1
+}

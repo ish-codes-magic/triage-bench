@@ -8,13 +8,15 @@ from triagelab.cache import DiskCache
 from triagelab.config import Config
 from triagelab.cost import BudgetGuard, load_price_table
 from triagelab.ledger import SpendLedger
-from triagelab.llm_client import CompletionBackend, LLMClient
+from triagelab.llm_client import CompletionBackend, LLMClient, ReplayOnlyBackend
 
 
 def build_llm_client(
     cfg: Config, *, run_id: str, backend: CompletionBackend | None = None
 ) -> LLMClient:
     """An `LLMClient` wired from config, with the all-time budget read from the ledger."""
+    if backend is None and cfg.cache.replay_only:
+        backend = ReplayOnlyBackend()
     if backend is None:
         # Lazy import: litellm takes seconds to import, and most commands never call a model.
         from triagelab.litellm_backend import LiteLLMBackend

@@ -64,6 +64,21 @@ def config_show(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     typer.echo(f"# fingerprint: {cfg.fingerprint()}")
 
 
+@runs_app.command("stats")
+def runs_stats(
+    run_dir: Annotated[Path, typer.Argument(help="A run folder, e.g. runs/<run_id>.")],
+    out: Annotated[Path | None, typer.Option("--out", help="Also write the report here.")] = None,
+) -> None:
+    """Agent system metrics from a run's traces: steps, tools, skills, budgets, cost."""
+    from triagelab.harness.trace_stats import agent_stats, render
+
+    text = render(agent_stats(run_dir), run_dir.name)
+    typer.echo(text)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text.encode("utf-8"))
+
+
 @runs_app.command("list")
 def runs_list(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     """List past runs, newest first, with their cost and the all-time spend."""
@@ -206,6 +221,14 @@ def eval_cmd(
         bool, typer.Option("--allow-test", help="Unlock the test split (max twice, logged).")
     ] = False,
     resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
+    otlp_endpoint: Annotated[
+        str | None,
+        typer.Option(
+            "--otlp-endpoint",
+            envvar="TRIAGELAB_OTLP_ENDPOINT",
+            help="Also export agent traces here, e.g. http://localhost:6006/v1/traces.",
+        ),
+    ] = None,
 ) -> None:
     """Run an experiment on a split and print its scorecard (with 95% bootstrap CIs)."""
     from triagelab.data.splits import parse_split
@@ -217,6 +240,9 @@ def eval_cmd(
         raise typer.BadParameter(str(err)) from err
     load_dotenv()
     cfg = load_config(config)
+    if otlp_endpoint:  # a viewing concern: it changes no model request or result
+        tracing = cfg.tracing.model_copy(update={"otlp_endpoint": otlp_endpoint})
+        cfg = cfg.model_copy(update={"tracing": tracing})
     try:
         outcome = run_eval(
             cfg,
@@ -244,7 +270,9 @@ def eval_cmd(
         typer.echo(f"  {name:20} {point:26} natural-rate: {weighted}")
     s = card.system
     typer.echo(
-        f"  cost ${s.cost_usd_total:.4f} (${s.cost_usd_per_issue:.5f}/issue) | "
+        # What the answers cost to produce, and what this run paid (0 if all cached).
+        f"  answers cost ${s.cost_usd_total:.4f} (${s.cost_usd_per_issue:.5f}/issue), "
+        f"spent this run ${outcome.spent_usd:.4f} | "
         f"p50 {s.latency_ms_p50 / 1000:.1f}s p95 {s.latency_ms_p95 / 1000:.1f}s | errors {s.errors}"
     )
 

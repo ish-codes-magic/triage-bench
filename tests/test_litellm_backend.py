@@ -4,8 +4,8 @@ import pytest
 from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitError
 
 from triagelab.config import ProviderRoute
-from triagelab.litellm_backend import LiteLLMBackend, build_params
-from triagelab.llm_client import LLMRequest, Message
+from triagelab.litellm_backend import LiteLLMBackend, build_params, wire_message
+from triagelab.llm_client import LLMRequest, Message, ToolCall, ToolSpec
 
 REQUEST = LLMRequest(
     model="openai/gpt-6-luna", messages=(Message(role="user", content="ping"),), max_tokens=16
@@ -80,3 +80,70 @@ def test_default_reasoning_sends_nothing() -> None:
     params = build_params(REQUEST, timeout_s=5)
     assert "reasoning_effort" not in params
     assert "extra_body" not in params
+
+
+TOOL = ToolSpec(
+    name="get_issue",
+    description="Fetch one past issue.",
+    parameters={"type": "object", "properties": {"number": {"type": "integer"}}},
+)
+
+
+def test_mock_tool_calls_are_parsed_with_raw_arguments() -> None:
+    backend = LiteLLMBackend(
+        extra_params={
+            "mock_response": "",
+            "mock_tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_issue", "arguments": '{"number": 1}'},
+                }
+            ],
+        }
+    )
+    completion = backend.complete(REQUEST.model_copy(update={"tools": (TOOL,)}), timeout_s=5)
+    assert completion.tool_calls == (
+        ToolCall(id="call_1", name="get_issue", arguments='{"number": 1}'),
+    )
+
+
+def test_tools_and_forced_tool_choice_use_the_openai_wire_format() -> None:
+    forced = REQUEST.model_copy(update={"tools": (TOOL,), "tool_choice": "get_issue"})
+    params = build_params(forced, timeout_s=5)
+    assert params["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_issue",
+                "description": "Fetch one past issue.",
+                "parameters": TOOL.parameters,
+            },
+        }
+    ]
+    assert params["tool_choice"] == {"type": "function", "function": {"name": "get_issue"}}
+    assert "parallel_tool_calls" not in params  # unlisted by our endpoints: routing would fail
+    auto = build_params(forced.model_copy(update={"tool_choice": "auto"}), timeout_s=5)
+    assert auto["tool_choice"] == "auto"
+    assert "tools" not in build_params(REQUEST, timeout_s=5)
+
+
+def test_tool_turns_are_sent_in_the_openai_message_format() -> None:
+    call = ToolCall(id="call_1", name="get_issue", arguments='{"number": 1}')
+    assert wire_message(Message(role="user", content="hi")) == {"role": "user", "content": "hi"}
+    assert wire_message(Message(role="assistant", content="", tool_calls=(call,))) == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_issue", "arguments": '{"number": 1}'},
+            }
+        ],
+    }
+    assert wire_message(Message(role="tool", content="{}", tool_call_id="call_1")) == {
+        "role": "tool",
+        "content": "{}",
+        "tool_call_id": "call_1",
+    }

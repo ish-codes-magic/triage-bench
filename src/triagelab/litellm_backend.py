@@ -26,7 +26,7 @@ from litellm.exceptions import AuthenticationError, BadRequestError
 
 from triagelab.config import ProviderRoute
 from triagelab.cost import Usage
-from triagelab.llm_client import Completion, LLMRequest
+from triagelab.llm_client import Completion, LLMRequest, Message, ToolCall
 
 litellm.suppress_debug_info = True
 litellm.drop_params = False
@@ -70,7 +70,7 @@ def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
     """Translate our request into `litellm.completion` keyword arguments."""
     params: dict[str, Any] = {
         "model": request.model,
-        "messages": [m.model_dump() for m in request.messages],
+        "messages": [wire_message(m) for m in request.messages],
         # Always explicit: if omitted, LiteLLM fills in the model's maximum output.
         "max_tokens": request.max_tokens,
         "timeout": timeout_s,
@@ -89,6 +89,26 @@ def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
                 "strict": True,
             },
         }
+    if request.tools:
+        params["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                },
+            }
+            for t in request.tools
+        ]
+        # `parallel_tool_calls` is never sent: no pinned endpoint lists it, and with
+        # `require_parameters` an unlisted parameter makes OpenRouter refuse the route.
+    if request.tool_choice is not None:
+        params["tool_choice"] = (
+            request.tool_choice
+            if request.tool_choice in ("auto", "none")
+            else {"type": "function", "function": {"name": request.tool_choice}}
+        )
     extra_body: dict[str, Any] = {}
     if request.route is not None:
         # LiteLLM merges `extra_body` into the JSON it sends to OpenRouter.
@@ -102,6 +122,23 @@ def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
     if extra_body:
         params["extra_body"] = extra_body
     return params
+
+
+def wire_message(m: Message) -> dict[str, Any]:
+    """Our message in the OpenAI chat format that LiteLLM and OpenRouter speak.
+
+    A tool-free message is exactly `{"role", "content"}`, as before tools existed.
+    """
+    msg: dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.tool_calls:
+        msg["content"] = m.content or None  # a pure tool-call turn has no text
+        msg["tool_calls"] = [
+            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+            for c in m.tool_calls
+        ]
+    if m.tool_call_id is not None:
+        msg["tool_call_id"] = m.tool_call_id
+    return msg
 
 
 def openrouter_provider_prefs(route: ProviderRoute) -> dict[str, Any]:
@@ -127,8 +164,19 @@ def _to_completion(response: Any) -> Completion:
     details = getattr(usage, "prompt_tokens_details", None)
     out_details = getattr(usage, "completion_tokens_details", None)
     hidden: dict[str, Any] = getattr(response, "_hidden_params", None) or {}
+    message = response.choices[0].message
     return Completion(
-        text=response.choices[0].message.content or "",
+        text=message.content or "",
+        tool_calls=tuple(
+            ToolCall(
+                id=c.id or f"call_{i}",
+                name=c.function.name or "",
+                arguments=c.function.arguments or "{}",
+            )
+            for i, c in enumerate(message.tool_calls or [])
+        ),
+        # LiteLLM maps OpenRouter's `reasoning` field to `reasoning_content`.
+        reasoning_text=getattr(message, "reasoning_content", None) or "",
         resolved_model=getattr(response, "model", None),
         usage=Usage(
             # For Anthropic, LiteLLM's prompt_tokens already includes cache reads/writes.

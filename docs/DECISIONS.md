@@ -22,6 +22,10 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 | [0016](#adr-0016-e1-baselines-and-tf-idf-before-embeddings) | E1 baselines, and TF-IDF before embeddings | M2 |
 | [0017](#adr-0017-a-concurrent-resumable-budget-safe-eval-runner) | A concurrent, resumable, budget-safe eval runner | M2 |
 | [0018](#adr-0018-branch-protection-and-evals-in-ci) | Branch protection and evals in CI | M2 |
+| [0019](#adr-0019-time-aware-retrieval-including-its-statistics) | Time-aware retrieval, including its statistics | M3 |
+| [0020](#adr-0020-arctic-embed-s-on-fastembed-with-a-resumable-embedding-store) | arctic-embed-s on fastembed, with a resumable embedding store | M3 |
+| [0021](#adr-0021-the-repo-intel-mcp-server) | The repo-intel MCP server | M3 |
+| [0022](#adr-0022-frozen-checkout-literal-code-search-and-index-only-history) | Frozen checkout, literal code search, and index-only history | M3 |
 
 ---
 
@@ -411,3 +415,80 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - Every push shows an eval, not just tests.
 - **Trade-off:** admin pushes bypass the required checks ("Bypassed rule violations"). Making them binding would mean a PR-per-milestone workflow, which is proposed to the owner.
+
+## ADR-0019: Time-aware retrieval, including its statistics
+
+**Context.**
+- §7.2 says the index used for issue X may contain only issues created before X.
+- Filtering *results* by date isn't enough. A standard BM25 computes IDF and average document length over every indexed document, so future issues still shape how past issues rank.
+
+**Decision.**
+- **Corpus:** holds each issue's creation-time title/body (reconstructed as for snapshots) plus the timestamped events needed to replay labels, renames and state. Nothing else from after creation is stored.
+- **Query paths:** `visible(as_of)` and `get(as_of)` are the only ones, and both refuse issues created at or after `as_of`.
+- **Our own BM25:**
+  - documents stored oldest-first, with per-term posting lists;
+  - document frequencies, collection size and average length come from the visible prefix only;
+  - Lucene-style non-negative IDF.
+  - A test asserts that adding future documents never changes past scores. This replaced the `rank-bm25` dependency.
+- **Dense search:** a prefix of the corpus-ordered embedding rows, so it is time-safe by construction.
+- **Fusion:** reciprocal rank fusion (k = 60), written by hand. It uses ranks, not scores, so BM25 and cosine need no calibration.
+
+**Consequences.**
+- Leakage-by-statistics is impossible rather than negligible.
+- The corpus is also a leakage boundary, so its tests run under `pytest -m leakage`.
+
+## ADR-0020: arctic-embed-s on fastembed, with a resumable embedding store
+
+**Context.**
+- `embedding_model` (§0) needed a small, local, permissive model.
+- This laptop has about 1.5 GB of free RAM, and background jobs get stopped under memory pressure.
+
+**Decision.**
+- **Model:** `snowflake/snowflake-arctic-embed-s` (33M parameters, 384 dimensions, Apache-2.0, April 2024), run via fastembed on ONNX Runtime with the CPU memory arena disabled. That's about 320 MB of RAM and no PyTorch. Owner's choice among three researched options.
+- **Store:** vectors are keyed by issue number in resumable chunks.
+- **Query prefix:** the model's query prefix is configurable, and both settings are measured.
+
+**Consequences.**
+- A ~30-minute embedding job survives interruption.
+- Adding older history doesn't invalidate existing vectors.
+- The ultra-light alternative (model2vec `potion-retrieval-32M`) remains a possible ablation.
+
+## ADR-0021: The repo-intel MCP server
+
+**Context.** §8: five read-only tools, with `as_of` enforced by the server, versioned tool descriptions, and bounded output.
+
+**Decision.**
+- **SDK:** MCP Python SDK v2 (`MCPServer`). Every tool is annotated `read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False`, and returns structured (pydantic) output.
+- **`as_of` is enforced in three places:**
+  1. the corpus refuses later issues;
+  2. an optional server-side ceiling rejects any `as_of` after the moment being triaged;
+  3. in M4 the harness will *inject* `as_of` into tool calls, so a model can never choose a later time.
+- **Tool descriptions and parameter descriptions** are treated as prompts, versioned by `TOOLS_VERSION`.
+- **Output bounds:** bodies are truncated to 6,000 characters and snippets to 300, each with a truncation marker. Code search caps both hits per file and total hits.
+- **Tests, in three layers:**
+  1. unit (corpus, BM25, code search, CODEOWNERS);
+  2. an in-process MCP `Client` against the real server;
+  3. a manual MCP Inspector check.
+
+**Consequences.**
+- The server is usable standalone (`python -m triagelab.mcp_server`) and publishable in M9.
+- The model sees no write capability anywhere.
+
+## ADR-0022: Frozen checkout, literal code search, and index-only history
+
+**Context.**
+- Code search must not show fixes made after the issues being triaged.
+- Half of all duplicate originals (93 of 202) predate the collected dataset window.
+
+**Decision.**
+- **Frozen checkout:** the source tree at the last `main` commit before `eval_start` (CPython `398d7e1`, 2026-05-18 23:55 UTC), extracted with tarfile's `data` filter.
+  - It's an approximation: an August issue sees May's code. Documented in the dataset card.
+- **Code search:**
+  - literal and case-insensitive, because model-written regexes are fragile;
+  - uses ripgrep when installed, with a pure-Python fallback (about 1–5 s on the 140 MB tree);
+  - CODEOWNERS parsed per GitHub's documented rules.
+- **Index-only history:** `windows.index_start` (CPython: 2024-01-01) adds retrieval-only history in a separate raw file. It never enters a split, so the dataset and its hash are unchanged.
+
+**Consequences.**
+- More duplicates become findable without touching the evaluation data.
+- Originals from before 2024 (about 50 of 202) remain unreachable, and that's reported as a coverage limit.

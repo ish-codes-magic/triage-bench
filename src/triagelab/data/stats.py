@@ -1,0 +1,208 @@
+"""Dataset statistics: distributions per task and split, rendered as a Markdown report.
+
+`compute_stats` is pure (records in, numbers out); `render_markdown` only formats. The
+report is committed under reports/data/ so the dataset's shape is reviewable in the repo.
+"""
+
+from collections import Counter
+from collections.abc import Sequence
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from triagelab.data.ground_truth import SilverTruth
+from triagelab.data.models import RawIssue
+from triagelab.data.profile import RepoProfile
+from triagelab.data.splits import FLAGS, Assignment, flags_of
+
+EVAL_SPLITS = ("dev", "test")
+
+
+class TaskRates(BaseModel):
+    """Positive rate per task: in the whole eval-window pool, in each sample, and weighted."""
+
+    pool_n: int
+    pool_rate: dict[str, float]
+    sample_rate: dict[str, dict[str, float]]  # split -> flag -> rate
+    weighted_rate: dict[str, dict[str, float]]  # split -> flag -> weighted estimate
+
+
+class DatasetStats(BaseModel):
+    repo: str
+    built_at: datetime
+    dataset_hash: str
+    issues: int
+    split_sizes: dict[str, int]
+    exclusions: dict[str, int]
+    body_edited: int
+    renamed: int
+    comments_truncated: int
+    timeline_truncated: int
+    rates: TaskRates
+    label_sources: dict[str, int]
+    human_triaged_rate: dict[str, float]
+    top_labels: dict[str, list[tuple[str, int]]]  # group -> [(label, count)] over eval pool
+    duplicate_sources: dict[str, int]
+    components: dict[str, dict[str, int]]  # split -> component -> count
+    component_skipped_ties: int
+
+
+def _rate(values: Sequence[bool]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def compute_stats(
+    issues: Sequence[RawIssue],
+    truths: dict[int, SilverTruth],
+    assignments: Sequence[Assignment],
+    profile: RepoProfile,
+    *,
+    built_at: datetime,
+    dataset_hash: str,
+) -> DatasetStats:
+    pool_splits = (*EVAL_SPLITS, "dev_reserve", "test_reserve")
+    pool = [truths[a.number] for a in assignments if a.split in pool_splits]
+
+    sample_rate: dict[str, dict[str, float]] = {}
+    weighted_rate: dict[str, dict[str, float]] = {}
+    for split in EVAL_SPLITS:
+        chosen = [a for a in assignments if a.split == split]
+        total_w = sum(a.weight or 0.0 for a in chosen) or 1.0
+        sample_rate[split] = {
+            f: _rate([flags_of(truths[a.number])[f] for a in chosen]) for f in FLAGS
+        }
+        weighted_rate[split] = {
+            f: sum((a.weight or 0.0) * flags_of(truths[a.number])[f] for a in chosen) / total_w
+            for f in FLAGS
+        }
+
+    label_sources: Counter[str] = Counter()
+    top: dict[str, Counter[str]] = {"type": Counter(), "area": Counter(), "family": Counter()}
+    for t in pool:
+        for lt in t.labels:
+            label_sources[lt.source] += 1
+            top[lt.group][lt.name] += 1
+
+    components: dict[str, dict[str, int]] = {}
+    for split in (*EVAL_SPLITS, "train"):
+        counts = Counter(
+            truths[a.number].component or "(none)" for a in assignments if a.split == split
+        )
+        components[split] = dict(counts.most_common())
+
+    ties = sum(
+        1 for t in truths.values() if t.component is None and t.component_votes and t.fix_prs
+    )
+    return DatasetStats(
+        repo=profile.repo,
+        built_at=built_at,
+        dataset_hash=dataset_hash,
+        issues=len(issues),
+        split_sizes=dict(Counter(a.split for a in assignments)),
+        exclusions=dict(Counter(a.exclusion_reason for a in assignments if a.exclusion_reason)),
+        body_edited=sum(i.last_edited_at is not None for i in issues),
+        renamed=sum(bool(i.title_renames) for i in issues),
+        comments_truncated=sum(i.comments_total > len(i.comments) for i in issues),
+        timeline_truncated=sum(i.timeline_total > 100 for i in issues),
+        rates=TaskRates(
+            pool_n=len(pool),
+            pool_rate={f: _rate([flags_of(t)[f] for t in pool]) for f in FLAGS},
+            sample_rate=sample_rate,
+            weighted_rate=weighted_rate,
+        ),
+        label_sources=dict(label_sources),
+        human_triaged_rate={
+            split: _rate([truths[a.number].human_triaged for a in assignments if a.split == split])
+            for split in ("train", *EVAL_SPLITS)
+        },
+        top_labels={g: c.most_common(12) for g, c in top.items()},
+        duplicate_sources=dict(
+            Counter(t.duplicate_source for t in truths.values() if t.duplicate_source)
+        ),
+        components=components,
+        component_skipped_ties=ties,
+    )
+
+
+def _pct(x: float) -> str:
+    return f"{100 * x:.1f}%"
+
+
+def render_markdown(s: DatasetStats, profile: RepoProfile) -> str:
+    w = profile.windows
+    lines = [
+        f"# Dataset report: {s.repo}",
+        "",
+        f"Built {s.built_at:%Y-%m-%d %H:%M UTC} · dataset hash `{s.dataset_hash[:16]}` · "
+        f"{s.issues} issues collected. Generated by `triagelab data build`; do not edit by hand.",
+        "",
+        "## Splits",
+        "",
+        f"- **train:** created {w.history_start} → {w.eval_start} (exclusive)",
+        f"- **dev:** stratified sample from {w.eval_start} → {w.test_start} (exclusive)",
+        f"- **test:** stratified sample from {w.test_start} → {w.eval_end}",
+        "- **\\*_reserve:** unsampled issues from the same windows "
+        "(silver-only trends; test_reserve is never used for tuning)",
+        "",
+        "| split | issues |",
+        "|---|---|",
+        *[f"| {k} | {v} |" for k, v in sorted(s.split_sizes.items())],
+        "",
+        f"Excluded: {s.exclusions or 'none'}. Body edited after creation: {s.body_edited} "
+        f"({_pct(s.body_edited / max(s.issues, 1))}), reconstructed from edit history. "
+        f"Titles renamed: {s.renamed}. Truncated comment lists: {s.comments_truncated}; "
+        f"truncated timelines: {s.timeline_truncated}.",
+        "",
+        "## Positive rates per task",
+        "",
+        f"Pool = every eligible issue in the dev+test windows (n = {s.rates.pool_n}). The samples "
+        "oversample rare positives; weighted rates use the stored sampling weights and "
+        "should track the pool.",
+        "",
+        "| task | pool (natural) | dev sample | dev weighted | test sample | test weighted |",
+        "|---|---|---|---|---|---|",
+    ]
+    for f in ("duplicate", "needs_info", "component"):
+        lines.append(
+            f"| {f} | {_pct(s.rates.pool_rate[f])} | {_pct(s.rates.sample_rate['dev'][f])} | "
+            f"{_pct(s.rates.weighted_rate['dev'][f])} | {_pct(s.rates.sample_rate['test'][f])} | "
+            f"{_pct(s.rates.weighted_rate['test'][f])} |"
+        )
+    lines += [
+        "",
+        "## T1 labels",
+        "",
+        "Who applied the taxonomy labels present on eval-window issues "
+        "(author = issue form or self-labelled at creation):",
+        "",
+        "| source | labels |",
+        "|---|---|",
+        *[f"| {k} | {v} |" for k, v in sorted(s.label_sources.items(), key=lambda kv: -kv[1])],
+        "",
+        "Human-triaged (a non-author human added or removed a triage label): "
+        + ", ".join(f"{k} {_pct(v)}" for k, v in s.human_triaged_rate.items()),
+        "",
+    ]
+    for group, items in s.top_labels.items():
+        lines.append(f"- **{group}:** " + (", ".join(f"{n} ({c})" for n, c in items) or "none"))
+    lines += [
+        "",
+        "## T2 duplicates",
+        "",
+        "Evidence used: "
+        + (", ".join(f"{k} ({v})" for k, v in s.duplicate_sources.items()) or "none"),
+        "",
+        "## T3 components",
+        "",
+        f"Skipped because the fix spanned components equally (ties): {s.component_skipped_ties}.",
+        "",
+        "| component | train | dev | test |",
+        "|---|---|---|---|",
+    ]
+    names = sorted({c for split in s.components.values() for c in split})
+    for c in names:
+        lines.append(
+            f"| {c} | {s.components.get('train', {}).get(c, 0)} | "
+            f"{s.components.get('dev', {}).get(c, 0)} | {s.components.get('test', {}).get(c, 0)} |"
+        )
+    return "\n".join(lines) + "\n"

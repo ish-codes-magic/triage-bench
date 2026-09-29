@@ -126,17 +126,32 @@ def _load_run(run_dir: Path) -> tuple[Config, Split, list[TriageResult]]:
 
 
 def compare_runs(
-    run_a: Path, run_b: Path, *, resamples: int = 1000, seed: int = 0
+    run_a: Path,
+    run_b: Path,
+    *,
+    resamples: int = 1000,
+    seed: int = 0,
+    exclude_errors: bool = False,
 ) -> list[DeltaRow]:
-    """B minus A on the issues both runs predicted, with paired-bootstrap intervals."""
+    """B minus A on the issues both runs predicted, with paired-bootstrap intervals.
+
+    `exclude_errors` drops issues where either run fell back (e.g. a provider outage), to
+    isolate the effect of a change from infrastructure noise.
+    """
     cfg_a, split_a, preds_a = _load_run(run_a)
     _, split_b, preds_b = _load_run(run_b)
     if split_a != split_b:
         raise ValueError(f"Runs are on different splits ({split_a} vs {split_b}).")
     examples = load_split(cfg_a.dataset.data_dir, load_profile(cfg_a.dataset.profile), split_a)
-    shared = {p.issue_ref for p in preds_a} & {p.issue_ref for p in preds_b}
+    # Later lines win: a retried issue's final prediction replaces its failed attempt.
+    latest_a = {p.issue_ref: p for p in preds_a}
+    latest_b = {p.issue_ref: p for p in preds_b}
+    shared = set(latest_a) & set(latest_b)
+    if exclude_errors:
+        shared = {r for r in shared if latest_a[r].error is None and latest_b[r].error is None}
     examples = [e for e in examples if e.snapshot.issue_ref in shared]
-    data_a, data_b = align(examples, preds_a), align(examples, preds_b)
+    data_a = align(examples, list(latest_a.values()))
+    data_b = align(examples, list(latest_b.values()))
     rows: list[DeltaRow] = []
     for name, fn in METRICS.items():
         d = paired_bootstrap(

@@ -235,11 +235,18 @@ def eval_cmd(
 
 
 @app.command()
-def compare(run_a: Path, run_b: Path) -> None:
+def compare(
+    run_a: Path,
+    run_b: Path,
+    exclude_errors: Annotated[
+        bool, typer.Option("--exclude-errors", help="Skip issues where either run fell back.")
+    ] = False,
+) -> None:
     """Paired-bootstrap comparison of two runs (B - A) on the issues both predicted."""
     from triagelab.eval.report import compare_runs, render_comparison
 
-    typer.echo(render_comparison(compare_runs(run_a, run_b), run_a.name, run_b.name))
+    rows = compare_runs(run_a, run_b, exclude_errors=exclude_errors)
+    typer.echo(render_comparison(rows, run_a.name, run_b.name))
 
 
 @app.command()

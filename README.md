@@ -64,10 +64,12 @@ flowchart LR
 | majority class | 0.40 [0.32, 0.49] | 0.37 [0.26, 0.49] | 0.26 [0.15, 0.38] | 0.76 | 0.00 | $0 |
 | **TF-IDF + logistic regression** | **0.71 [0.64, 0.77]** | **0.65 [0.56, 0.74]** | 0.65 [0.52, 0.77] | **0.94** | 0.09 [0.00, 0.26] | $0 |
 | Qwen3.5-9B, single call, no tools | 0.59 [0.54, 0.64] | 0.57 [0.48, 0.67] | 0.69 [0.56, 0.80] | 0.89 | 0.20 [0.05, 0.36] | $0.00015 |
+| Qwen3.5-9B, single call, thinking on | 0.69 [0.63, 0.74] | 0.65 [0.57, 0.74] | 0.76 [0.64, 0.87] | 0.93 | 0.20 [0.05, 0.37] | $0.00026 |
 
-- **Negative result first.** A 9B model with generic instructions is **significantly worse than TF-IDF at labelling**: paired difference −0.12 [−0.19, −0.06] in T1 micro-F1.
+- **Negative result first.** A 9B model answering directly is **significantly worse than TF-IDF at labelling**: paired difference −0.12 [−0.19, −0.06] in T1 micro-F1.
+  - Letting it think first gains **+0.10 [+0.06, +0.14]** and closes the gap (vs. TF-IDF: −0.02 [−0.09, +0.05], no evidence of a difference), at 1.7× the cost. → [iteration 2](docs/ITERATIONS.md#iteration-2-does-thinking-pay-for-a-9b-model)
   - On components and needs-info there's no evidence either way at this sample size.
-  - That's the bar the agent, with skills and retrieval tools (M3–M4), has to clear.
+  - The bar for the agent (skills and retrieval tools, M4) is TF-IDF's 0.71: it has to *beat* a free baseline, not tie it.
 - **Duplicates need retrieval.** Lexical nearest-neighbour search finds almost none (link-F1 0.11 [0.00, 0.32]), and a model without tools can't find them at all.
 - **The first measured iteration was a prompt-formatting fix.**
   - The prompt listed labels as `area: stdlib, …`, and the model answered `area-stdlib` on 57% of issues.

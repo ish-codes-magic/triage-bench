@@ -6,6 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
+    "fastembed>=0.8.1",
     "httpx>=0.28.1",
     "litellm>=1.103.0",
     "mcp>=2.2,<3",

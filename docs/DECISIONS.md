@@ -514,3 +514,117 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - One default for the server, the M4 harness and E3.
 - Hybrid-vs-dense is **re-measured on agent-written queries** from M4 traces; if dense wins there, the default changes with a new ADR.
 - The hybrid-vs-dense tie is reported as a (mild) negative result: fusion didn't add accuracy here.
+
+## ADR-0024: Native tool calling, with the final answer as a tool
+
+**Context.**
+- The agent needs tools (MCP, skills) and a validated final `TriageResult` (§10).
+- The pinned route (`deepinfra/bf16`) lists `tools` and `tool_choice` but not `parallel_tool_calls`, and our `require_parameters: true` makes OpenRouter refuse a route for any unlisted parameter. (Parasail, the M7 decision route, has no tool support at all.)
+
+**Decision.**
+- **Protocol:** native OpenAI-style tool calls through our client (`LLMRequest.tools`, `tool_choice`), never `parallel_tool_calls`.
+- **Final answer:** a `submit_triage` tool whose parameters are the answer's JSON schema, with `$ref`s inlined and titles dropped. A validation error is that tool's result, and the model gets up to 2 retries.
+- **Forced answer:** near any budget the next call is made with `tool_choice=submit_triage`.
+- **Reasoning:** traced, but not sent back on later turns. OpenRouter recommends preserving it in tool loops but names no Qwen requirement, and dropping it keeps prompts smaller.
+- **Cache compatibility:** empty tool fields are omitted from serialization, so every tool-free request keeps its old cache key. A test pins one.
+
+**Consequences.**
+- Rejected: a JSON "action" protocol via `response_format` (needless when native tools exist), and ReAct text parsing (fragile).
+- E1's cached answers stay valid.
+
+## ADR-0025: A synchronous MCP client over an anyio blocking portal
+
+**Context.** The runner is threaded and synchronous. The MCP Python SDK 2.2.0 is async-only and ships no sync wrapper.
+
+**Decision.**
+- **Bridge:** `McpSession` owns one event loop (an anyio `BlockingPortal`) and one MCP `Client` session. Worker threads submit `call_tool` to it, and the session multiplexes requests.
+- **Transports:**
+  - evaluation launches `repo-intel` as a real **stdio subprocess**, with stderr going to `runs/<id>/mcp_server.log`;
+  - tests use the in-memory transport.
+
+**Consequences.**
+- The agent crosses a real protocol boundary, as a third-party client would.
+- One server process serves every thread.
+- Rejected: making the harness async, which would spread `async` through the runner, the triagers and the LLM client.
+
+## ADR-0026: Skills loaded by hand; skill tools are local
+
+**Context.**
+- §9: progressive disclosure, implemented ourselves.
+- The Agent Skills spec (checked 2026-09-30, last changed 2026-08-04) and its client guide describe the catalog, activation and resource levels.
+
+**Decision.**
+- **Three levels:**
+  1. the `<available_skills>` catalog (names and descriptions) in the system prompt;
+  2. `load_skill(name)`, which returns the body plus a list of files, not their contents;
+  3. `read_skill_file(name, path)`, confined to the skill folder.
+- **Validation:** parsing is lenient at runtime (per the client guide), and a test holds our own skills to the strict spec.
+- **Placement:** skill tools are local, not MCP. Skills instruct this agent; they aren't repository data.
+- **Compaction:** skill content is never elided.
+
+**Consequences.**
+- Whether a small model *chooses* to load a skill becomes measurable: the skill load rate in `runs stats`.
+- The first runs show that it doesn't (0 of 3), which H1/E2 must account for.
+
+## ADR-0027: Per-issue budgets force an answer and count original cost
+
+**Context.** §10 needs max steps, tool calls, tokens and cost per issue, with a graceful fallback.
+
+**Decision.**
+- **Soft limit:** the step before a limit (or any exhausted limit) forces `submit_triage`.
+- **Hard stop:** at `max_steps` the loop ends with no answer, and the reason is recorded as `budget:<limit>`.
+- **Cost basis:** budgets count cached responses at their *original* cost and tokens. Counting cache hits as free would trip a limit at a different step during replay, change every later request, and break the cassettes.
+
+**Consequences.**
+- A slow issue still yields a flagged answer rather than an empty one.
+- Replays make exactly the decisions the recorded run made.
+
+## ADR-0028: Deterministic context compaction
+
+**Context.** §10 asks for summaries of older turns near the context limit.
+
+**Decision.**
+- **Truncation:** every tool result is truncated when it is produced.
+- **Elision:** above `context_limit_tokens` (estimated at 4 characters per token), the oldest tool results become a one-line stub naming the call, so the model can repeat it.
+- **Never elided:** the system prompt, the issue, skill content, and the last two results.
+- **Logging:** every compaction is traced with its before and after sizes.
+
+**Consequences.** No extra model call, no new failure mode, and replays stay deterministic. An LLM-written summary was rejected on cost and reproducibility.
+
+## ADR-0029: JSONL traces as the source of truth; Phoenix as the viewer
+
+**Context.**
+- §5/§10 ask for OpenTelemetry to a self-hostable viewer (Langfuse or Arize Phoenix) plus local JSONL.
+- The laptop has 15.8 GB of RAM with about 1.7 GB free.
+- Langfuse self-hosting needs six containers (web, worker, Postgres, ClickHouse, Redis, MinIO), with documented minimums adding up to about 25 GiB.
+- Phoenix is one Python process on SQLite, with OTLP at `:6006/v1/traces`.
+
+**Decision.**
+- **JSONL:** `runs/<id>/traces.jsonl` records every model call, tool call, compaction, validation error and final answer.
+- **OpenTelemetry (optional, `tracing.otlp_endpoint`):**
+  - an AGENT span per issue, with LLM and TOOL child spans recorded with their measured timings;
+  - OpenInference attribute names;
+  - a private tracer provider per run.
+- **Viewer:** Phoenix, run on demand with `uvx`. It isn't a project dependency.
+
+**Consequences.** Traces work offline and in CI (as artifacts). The viewer is a convenience, never a requirement.
+
+## ADR-0030: Cassettes are the response cache, replayed read-only
+
+**Context.** §12.8 wants a 10-issue agent smoke eval on every PR that is deterministic and free.
+
+**Decision.**
+- **Recording:** recorded responses live in `tests/cassettes/agent-smoke/`, written by the ordinary content-addressed cache (ADR-0006).
+- **Replay:** `cache.replay_only` swaps in a backend that raises `CassetteMissError` on any miss. It isn't retried, and it stops the run.
+- **Setup:**
+  - the smoke config extends the real agent config;
+  - repo-intel runs as a stdio subprocess over a synthetic BM25 corpus;
+  - re-recording takes two documented commands and about 5 cents, and it charges the real spend ledger.
+- **Byte-identical requests across OSes:**
+  - the cache writes LF on every OS;
+  - skills are read with universal newlines;
+  - pre-commit leaves cassette files untouched.
+
+**Consequences.**
+- Any change to a prompt, skill, tool output or agent setting fails CI until the cassettes are re-recorded, on purpose.
+- No API key ever reaches PR workflows.

@@ -7,11 +7,11 @@ history instead, and refuse (rather than guess) when that history can't prove it
 """
 
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from triagelab.data.models import IssueSnapshot, RawIssue
+from triagelab.data.models import IssueSnapshot, LabelEvent, RawIssue, StateEvent, TitleRename
 
 # The oldest body revision is timestamped at creation; allow for clock skew between the
 # issue record and its first edit-history entry.
@@ -67,7 +67,22 @@ class IssueAsOf(BaseModel):
     state_reason: str | None
 
 
-def view_as_of(issue: RawIssue, as_of: datetime) -> IssueAsOf:
+class Timeline(Protocol):
+    """Anything with an issue's timestamped history (a RawIssue, or a retrieval-corpus entry)."""
+
+    @property
+    def number(self) -> int: ...
+    @property
+    def created_at(self) -> datetime: ...
+    @property
+    def title_renames(self) -> tuple[TitleRename, ...]: ...
+    @property
+    def label_events(self) -> tuple[LabelEvent, ...]: ...
+    @property
+    def state_events(self) -> tuple[StateEvent, ...]: ...
+
+
+def replay(issue: Timeline, creation_title: str, creation_body: str, as_of: datetime) -> IssueAsOf:
     """Replay labels, renames and state changes strictly before `as_of`.
 
     The body is always the creation-time body: we only keep the oldest revision, and any
@@ -76,7 +91,7 @@ def view_as_of(issue: RawIssue, as_of: datetime) -> IssueAsOf:
     if issue.created_at >= as_of:
         raise SnapshotError(f"#{issue.number} did not exist yet at {as_of}")
 
-    title = title_at_creation(issue)
+    title = creation_title
     for rename in sorted(issue.title_renames, key=lambda r: r.at):
         if rename.at < as_of:
             title = rename.current
@@ -102,8 +117,15 @@ def view_as_of(issue: RawIssue, as_of: datetime) -> IssueAsOf:
         number=issue.number,
         created_at=issue.created_at,
         title=title,
-        body=body_at_creation(issue),
+        body=creation_body,
         labels=tuple(sorted(labels)),
         state=state,
         state_reason=reason,
     )
+
+
+def view_as_of(issue: RawIssue, as_of: datetime) -> IssueAsOf:
+    """A past issue as someone at time `as_of` could have seen it (for M3's index)."""
+    if issue.created_at >= as_of:
+        raise SnapshotError(f"#{issue.number} did not exist yet at {as_of}")
+    return replay(issue, title_at_creation(issue), body_at_creation(issue), as_of)

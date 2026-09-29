@@ -1,0 +1,45 @@
+# Ground-truth rules for python/cpython (primary repo). See data/DATASET_CARD.md and
+# docs/DECISIONS.md (ADR-0011..0013) for why each rule is what it is.
+repo: python/cpython
+
+windows:
+  history_start: 2025-11-19   # train split + retrieval history; may predate model cutoffs (approved 2026-09-29)
+  eval_start: 2026-05-19      # after GPT-6 Luna's stated cutoff (2026-05-18); Qwen3.5 released earlier
+  test_start: 2026-07-19      # dev = [2026-05-19, 2026-07-19), test = [2026-07-19, 2026-08-18]
+  eval_end: 2026-08-18        # collected 2026-09-29, minus 6 weeks for labels/closures to settle
+
+splits:
+  dev_size: 100
+  test_size: 50
+  dev_min_positives: {duplicate: 12, needs_info: 12, component: 30}
+  test_min_positives: {duplicate: 6, needs_info: 6, component: 15}
+  seed: 20260929
+
+# T1. Type is effectively single-label; area and topic/OS families are multi-label.
+taxonomy:
+  type: [type-bug, type-crash, type-feature, type-refactor, type-security]
+  area: [stdlib, extension-modules, interpreter-core, docs, tests, build, infra, performance]
+  prefixes: ["topic-", "OS-"]
+
+# T4. CPython's "pending": "The issue will be closed if no feedback is provided".
+needs_info_labels: [pending]
+
+# T3. CPython PRs don't say "fixes #N"; every PR title starts with "gh-<issue>:" (backports
+# add a "[3.x] " prefix). Only merged PRs into main count, so backports never vote twice.
+main_branch: main
+linked_pr_title_pattern: '^(?:\[\d+\.\d+\]\s*)?gh-{number}\b'
+
+# Directory -> component, taken from the maintainers' own area-label descriptions
+# ("C modules in the Modules dir", "(Objects, Python, Grammar, and Parser dirs)", ...).
+# First matching prefix wins, so the more specific Lib/test/ precedes Lib/.
+components:
+  - {name: tests, prefixes: [Lib/test/], role: supporting}
+  - {name: docs, prefixes: [Doc/], role: supporting}
+  - {name: stdlib, prefixes: [Lib/]}
+  - {name: extension-modules, prefixes: [Modules/]}
+  - {name: interpreter-core, prefixes: [Objects/, Python/, Grammar/, Parser/, Include/]}
+  - {name: build, prefixes: [PCbuild/, Tools/build/, Tools/wasm/, Android/, iOS/, Mac/, configure, Makefile.pre.in, pyconfig.h.in]}
+  - {name: infra, prefixes: [.github/, .azure-pipelines/]}
+
+# Every PR adds a NEWS entry; counting it would add noise to every vote.
+ignore_paths: [Misc/NEWS.d/, Misc/ACKS]

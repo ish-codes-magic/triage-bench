@@ -95,6 +95,25 @@ Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from t
 
 Full report: [reports/retrieval/python__cpython.md](reports/retrieval/python__cpython.md) (`triagelab retrieval eval`).
 
+## The agent (M4): what do tools buy?
+
+Our own agent loop over the `repo-intel` MCP server, with the CPython Agent Skill available on demand. Same model as the single-shot baseline (Qwen3.5-9B, thinking on), same label vocabulary, same issue text. Dev split, n = 100, silver labels.
+
+| system | T1 micro-F1 | T2 duplicate link-F1 | T3 accuracy | $/issue | p50 latency |
+|---|---|---|---|---|---|
+| TF-IDF classifier | 0.71 [0.64, 0.77] | 0.11 [0.00, 0.32] | 0.65 [0.52, 0.77] | $0 | 0.1 s |
+| single-shot LLM, thinking | 0.69 [0.63, 0.74] | 0.00 | 0.76 [0.64, 0.87] | $0.00026 | 23 s |
+| **agent v1** | 0.72 [0.66, 0.77] | **0.43 [0.13, 0.67]** | 0.72 [0.60, 0.83] | $0.0072 | 164 s |
+
+- **Tools buy retrieval.** The agent is the only system that finds duplicates' originals: **+0.33 [+0.08, +0.58]** link-F1 over nearest-neighbour search, and **+0.44 [+0.13, +0.67]** over the model without tools.
+- **Negative result: no evidence of a gain on labels or components** over a free classifier (+0.01 [−0.06, +0.09] T1 micro-F1), at 28× the single-shot cost.
+- **Progressive disclosure went unused.** The model called `load_skill` on **1 of 100** issues. So this run can't answer H1 (do skills help?) until skill use is ensured, which is itself a finding about small models.
+- **Measured failure modes, the next iterations:**
+  - 53% of answers had to be forced by the step budget (search thrash);
+  - an optional `component_top3` field was mostly omitted, so top-3 accuracy collapsed to top-1.
+
+Agent behaviour: [reports/agent/dev-agent-v1.md](reports/agent/dev-agent-v1.md) (`triagelab runs stats`). Traces: JSONL per run, plus OpenTelemetry spans viewable in Arize Phoenix.
+
 ## The dataset: CPython issues, exactly as they were opened
 
 5,476 [python/cpython](https://github.com/python/cpython) issues (May 2025 – Aug 2026), with silver ground truth for all four tasks. See the [dataset card](data/DATASET_CARD.md) and the [generated report](reports/data/python__cpython.md).
@@ -133,8 +152,13 @@ Full report: [reports/retrieval/python__cpython.md](reports/retrieval/python__cp
 - **A read-only MCP server with the time cutoff enforced server-side.**
   - `repo-intel` exposes five tools: similar issues, a past issue as of a date, code search on a frozen checkout, CODEOWNERS, components.
   - Every tool is annotated read-only and returns bounded, structured output.
-  - The cutoff (`as_of`) is enforced three ways: the corpus refuses later issues, the server has an optional ceiling, and the harness will inject `as_of` itself. The prompt is never the control.
+  - The cutoff (`as_of`) is enforced three ways: the corpus refuses later issues, the server has an optional ceiling, and the agent harness removes `as_of` from every schema the model sees and injects it. The prompt is never the control.
   - Tested in three layers: unit tests, a real MCP client in-process, and a scripted run of the official MCP Inspector. → [ADR-0021](docs/DECISIONS.md#adr-0021-the-repo-intel-mcp-server)
+- **An agent harness written by hand.**
+  - A loop with a validated `submit_triage` tool as the final answer, fed-back validation errors, forced answers near per-issue budgets, and deterministic context compaction. → [ADR-0024](docs/DECISIONS.md#adr-0024-native-tool-calling-with-the-final-answer-as-a-tool)
+  - A synchronous MCP client (anyio blocking portal) talks to `repo-intel` as a real stdio subprocess.
+  - Agent Skills with progressive disclosure, held to the open spec by tests.
+  - Every model and tool call is traced to JSONL and to OpenTelemetry spans (OpenInference attributes, viewable in Phoenix).
 - **Jobs that survive being killed.**
   - The 12k-issue embedding build is resumable and keyed by issue number, with atomic chunk writes.
   - It was stopped twice under memory pressure and finished without redoing work.
@@ -146,6 +170,7 @@ Full report: [reports/retrieval/python__cpython.md](reports/retrieval/python__cp
   - The same pre-commit hooks locally and in CI, with workflows linted by actionlint.
   - An Ubuntu + Windows test matrix, and Dependabot for both actions and the `uv` lockfile.
   - A path-filtered MCP workflow runs the MCP client contract tests and builds the wheel only when the server or retrieval code changes.
+  - **CI for an LLM agent:** every PR replays a 10-issue agent eval from recorded model responses (cassettes) through the real stdio MCP server. It's free and deterministic across OSes (recorded on Windows, replayed on Linux), and any changed prompt, skill or tool output fails the build. Trace stats go to the job summary, and traces are uploaded as artifacts. → [ADR-0030](docs/DECISIONS.md#adr-0030-cassettes-are-the-response-cache-replayed-read-only)
   - Planned: an LLM regression gate that posts paired-bootstrap metric deltas on PRs, and an approval-gated, audited one-time test-set evaluation.
 - **Verify, don't remember.** Before any code, every external API was checked against current docs, and several contradicted older assumptions. → [M0 learning note](docs/learning/M0-foundations.md)
 
@@ -155,7 +180,7 @@ Full report: [reports/retrieval/python__cpython.md](reports/retrieval/python__cp
 - [x] **M1 Data:** collection, creation-time snapshots, ground-truth derivation, time splits, leakage tests
 - [x] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
 - [x] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
-- [ ] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
+- [x] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
 - [ ] **M5 Gold labels, judge, failure taxonomy**
 - [ ] **M6 Iteration loop + LLM regression gate in CI**
 - [ ] **M7 Decision layer:** Jev, LLM and classifier backends, calibration, cascade
@@ -190,6 +215,12 @@ uv run triagelab retrieval build -p configs/repos/python__cpython.yaml
 uv run triagelab retrieval eval  -p configs/repos/python__cpython.yaml
 uv run triagelab mcp serve -p configs/repos/python__cpython.yaml       # stdio
 bash scripts/mcp_inspector_check.sh                                    # official MCP Inspector
+
+# The agent (~1 h and ~$0.75 for 100 dev issues; everything is cached)
+uv run triagelab eval -c configs/experiments/agent.yaml --split dev
+uv run triagelab runs stats runs/<run_id>          # tools, skills, budgets, cost per issue
+PHOENIX_WORKING_DIR=.phoenix uvx --from arize-phoenix==20.16.0 phoenix serve   # trace viewer
+bash scripts/phoenix_check.sh 3                    # re-send 3 issues' traces (free from cache)
 ```
 
 Development:
@@ -210,11 +241,14 @@ src/triagelab/      config · cost · cache · ledger · retry · llm_client · 
   baselines/        majority · TF-IDF + logistic regression · single-shot LLM
   retrieval/        time-aware corpus · own BM25 · dense index · RRF · embedding store · benchmark
   mcp_server/       repo-intel: five read-only tools, as_of guard, code search, CODEOWNERS
-data/DATASET_CARD.md, reports/  dataset card, generated data/results/retrieval reports
+  harness/          agent loop · tools · MCP client · budgets · compaction · tracing · agent
+  skills/           Agent Skills loader (progressive disclosure)
+skills/             the skills themselves: triage-cpython (+ references/), generic-triage
+data/DATASET_CARD.md, reports/  dataset card, generated data/results/retrieval/agent reports
 docs/               DECISIONS.md (ADRs) · learning/ (one note per milestone)
 .github/            CI + path-filtered MCP workflows, composite setup action, Dependabot
-scripts/            MCP Inspector check (layer 3 of the server tests)
-tests/              unit and integration tests, offline by default
+scripts/            MCP Inspector check (layer 3 of the server tests), Phoenix trace check
+tests/              unit and integration tests, offline by default; cassettes/ (recorded model responses)
 ```
 
 ## License

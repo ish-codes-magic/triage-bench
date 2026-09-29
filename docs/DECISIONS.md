@@ -207,7 +207,7 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
   | agent_model | `qwen/qwen3.5-9b` @ `deepinfra/bf16` | 0.10 / 0.15 | Small, open weights (Apache-2.0); tools + JSON schema at full precision |
   | LLM decision backend (E6) | `qwen/qwen3.5-9b` @ `parasail/bf16` | 0.10 / 0.25 | Same model; this provider returns logprobs (no tools, and decisions don't need them) |
   | judge_model | `openai/gpt-6-luna` @ `openai` | 0.10 / 0.50 | A different family from the agent (limits self-preference), with a **stated** cutoff |
-  | E5 comparison | *pending:* `qwen/qwen3.5-27b` @ `alibaba` | 0.195 / 1.56 | Qwen3.5-4B isn't on OpenRouter, so E5 compares 9B with a same-family 27B |
+  | small_model slot → E5 comparison | `qwen/qwen3.5-27b` @ `alibaba` | 0.195 / 1.56 | Qwen3.5-4B isn't on OpenRouter, so E5 asks "does 3× bigger help?" within one family (confirmed 2026-09-29) |
 
 - **Cutoff rule for undisclosed cutoffs:**
   - A model can't have trained on data from after its release, so the public release (or OpenRouter listing) date serves as a conservative upper bound.

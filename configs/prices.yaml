@@ -34,7 +34,7 @@ models:
     output_per_mtok: 1.56
     source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-27b/endpoints
     verified_on: 2026-09-29
-    notes: Proposed E5 size comparison (pending). Official provider; precision not disclosed.
+    notes: E5 size comparison (9B vs 27B). Official provider; precision not disclosed.
   openrouter/openai/gpt-6-luna@openai:
     input_per_mtok: 0.10
     output_per_mtok: 0.50

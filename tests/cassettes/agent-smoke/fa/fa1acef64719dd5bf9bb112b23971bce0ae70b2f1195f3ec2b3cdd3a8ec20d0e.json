@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3166,
+  "tokens_out": 124,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 110
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-a1fcc821ffcbc500",
+   "name": "get_issue",
+   "arguments": "{\"number\": 9}"
+  }
+ ],
+ "reasoning_text": "Let me check the other similar issues to understand the pattern better. The issue title is \"asyncio problem 125\" and the body is \"asyncio pathlib glob event loop task cancel observed in scenario 4.\"\n\nIssue #5 has the exact same body text \"asyncio pathlib glob event loop task cancel observed in scenario 4.\" and is open. This looks like a duplicate.\n\nLet me verify by checking a couple more of these issues to confirm the pattern.\n\n",
+ "cost_usd": 0.00033520000000000007,
+ "original_cost_usd": 0.00033520000000000007,
+ "cache_hit": false,
+ "latency_ms": 2806,
+ "attempts": 1
+}

@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3164,
+  "tokens_out": 77,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 59
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-a0058c3bcf6375bf",
+   "name": "get_issue",
+   "arguments": "{\"number\": 3}"
+  }
+ ],
+ "reasoning_text": "This is clearly a duplicate of issue #7. The issue text is identical: \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nLet me check a couple more to understand the pattern better, but this is clearly a duplicate.\n\n",
+ "cost_usd": 0.00032795000000000003,
+ "original_cost_usd": 0.00032795000000000003,
+ "cache_hit": false,
+ "latency_ms": 2484,
+ "attempts": 1
+}

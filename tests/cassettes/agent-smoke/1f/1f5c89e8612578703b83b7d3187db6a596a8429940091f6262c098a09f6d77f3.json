@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2452,
+  "tokens_out": 110,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 71
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-9649f43a11a9e42a",
+   "name": "search_similar_issues",
+   "arguments": "{\"query\": \"documentation typo howto sphinx wording scenario 3\", \"k\": 5}"
+  }
+ ],
+ "reasoning_text": "Let me read the issue more carefully. The issue is about a \"documentation problem\" - specifically a \"documentation typo\" in a \"howto sphinx wording\" observed in \"scenario 3\".\n\nThis is clearly a documentation issue. Let me search for similar issues to see if this is a duplicate.\n\n",
+ "cost_usd": 0.0002617,
+ "original_cost_usd": 0.0002617,
+ "cache_hit": false,
+ "latency_ms": 2847,
+ "attempts": 1
+}

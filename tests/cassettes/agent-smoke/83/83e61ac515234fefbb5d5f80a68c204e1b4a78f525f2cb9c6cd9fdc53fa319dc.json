@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3338,
+  "tokens_out": 684,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 358
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-a656966c7e5d23e2",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"extension-modules\", \"confidence\": 0.95}, {\"label\": \"type-bug\", \"confidence\": 0.95}], \"component\": \"extension-modules\", \"component_top3\": [\"extension-modules\", \"stdlib\", \"interpreter-core\"], \"component_confidence\": 0.95, \"duplicate_of\": 7, \"duplicate_confidence\": 0.95, \"duplicate_candidates\": [3, 11, 19, 23], \"needs_info\": true, \"needs_info_confidence\": 0.9, \"missing_info\": [\"Actual reproduction steps or code example\", \"Expected vs actual behavior\", \"Python version and environment details\"], \"triage_comment\": \"This appears to be a duplicate of issue #7 which has the exact same description. Please provide a real reproduction case with code, expected vs actual behavior, and environment details. The current report is too vague to be actionable.\"}"
+  }
+ ],
+ "reasoning_text": "Let me analyze this issue:\n\n1. The issue title is \"_sqlite3 problem 127\"\n2. The body is \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nThis is very similar to issue #7 which has the exact same body text: \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nThe issue #7 was opened on 2025-05-19 and is still open. The current issue (127) was opened on 2026-05-19 with the exact same description.\n\nThis appears to be a duplicate of issue #7. The reporter is using the same template/format and describing the same \"scenario 1\" issue.\n\nLet me check a few more to understand the pattern:\n\n- Issue #3: scenario 2\n- Issue #7: scenario 1\n- Issue #11: scenario 0\n- Issue #19: scenario 3\n- Issue #23: scenario 2\n\nThe current issue (127) says \"scenario 1\" which matches issue #7 exactly.\n\nThis is clearly a duplicate. The confidence is very high (0.95+) because the text is identical.\n\nFor the triage:\n- Type: type-bug (it's labeled as a bug in the similar issues)\n- Area: extension-modules (the _sqlite3 module is in Modules/)\n- Component: extension-modules (the fix would change the _sqlite3 C module)\n- Duplicate of: 7\n- Duplicate confidence: 0.95 (the text is identical)\n- Needs info: True - the reporter hasn't provided any actual details about what the bug is, just a template-like description. They need to provide a real reproduction case.\n\nLet me submit the triage.\n",
+ "cost_usd": 0.0004364,
+ "original_cost_usd": 0.0004364,
+ "cache_hit": false,
+ "latency_ms": 14566,
+ "attempts": 1
+}

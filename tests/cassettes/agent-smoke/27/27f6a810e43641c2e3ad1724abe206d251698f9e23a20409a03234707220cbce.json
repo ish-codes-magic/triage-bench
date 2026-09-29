@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2990,
+  "tokens_out": 89,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 72
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-889a655637ced84d",
+   "name": "get_issue",
+   "arguments": "{\"number\": 7}"
+  }
+ ],
+ "reasoning_text": "The search results show several similar issues with the same pattern \"_sqlite3 problem X\" and similar snippets. Issue #7 has the exact same snippet as this issue: \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nLet me check issue #7 to see if it's a duplicate.\n\n",
+ "cost_usd": 0.00031235000000000003,
+ "original_cost_usd": 0.00031235000000000003,
+ "cache_hit": false,
+ "latency_ms": 2150,
+ "attempts": 1
+}

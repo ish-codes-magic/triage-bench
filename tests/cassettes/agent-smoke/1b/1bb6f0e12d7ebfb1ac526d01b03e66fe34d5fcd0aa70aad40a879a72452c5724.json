@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2979,
+  "tokens_out": 65,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 46
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-848dfac81ee52866",
+   "name": "get_issue",
+   "arguments": "{\"number\": 4}"
+  }
+ ],
+ "reasoning_text": "The search results show several similar issues with the same wording pattern. Let me check issue #4 and #24 since they both mention \"scenario 3\" which matches the current issue.\n\n",
+ "cost_usd": 0.00030765,
+ "original_cost_usd": 0.00030765,
+ "cache_hit": false,
+ "latency_ms": 1919,
+ "attempts": 1
+}

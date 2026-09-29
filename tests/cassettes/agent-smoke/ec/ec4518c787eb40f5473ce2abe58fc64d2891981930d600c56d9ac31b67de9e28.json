@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2993,
+  "tokens_out": 111,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 89
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-9dcfb806fea7ba2d",
+   "name": "get_issue",
+   "arguments": "{\"number\": 3}"
+  }
+ ],
+ "reasoning_text": "The search results show several similar issues with the same title pattern \"_sqlite3 problem X\" and very similar snippets. Issue #3 and #23 both mention \"scenario 2\" which matches this issue. Let me check issue #3 and #23 to see if they are duplicates or if they describe the same problem.\n\nLet me get the full text of issue #3 and #23 to compare.\n\n",
+ "cost_usd": 0.00031595,
+ "original_cost_usd": 0.00031595,
+ "cache_hit": false,
+ "latency_ms": 2926,
+ "attempts": 1
+}

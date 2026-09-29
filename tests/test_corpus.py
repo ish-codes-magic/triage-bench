@@ -66,3 +66,16 @@ def test_round_trip(tmp_path: Path) -> None:
     loaded = Corpus.load(tmp_path / "corpus.jsonl")
     assert [i.number for i in loaded.issues] == [1, 2, 3]
     assert loaded.issues[0] == corpus.issues[0]
+
+
+def test_refusals_do_not_reveal_whether_a_later_issue_exists() -> None:
+    corpus = _corpus()
+    t2 = corpus.issues[1].created_at
+
+    def message(number: int) -> str:
+        with pytest.raises(NotVisibleError) as info:
+            corpus.get(number, t2)
+        return str(info.value).replace(f"#{number}", "#N")
+
+    # Issue 3 exists (later); 999 never does. The model must not be able to tell.
+    assert message(3) == message(999)

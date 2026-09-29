@@ -75,7 +75,7 @@ async def test_get_issue_refuses_the_future(intel: RepoIntel) -> None:
     assert ok.structured_content["title"] == "zipfile crashes on empty archive"
     future = await call(intel, "get_issue", {"number": 3, "as_of": t.isoformat()})
     assert future.is_error
-    assert "not visible" in future.content[0].text
+    assert "not available" in future.content[0].text
 
 
 async def test_as_of_ceiling_is_enforced_by_the_server(intel: RepoIntel) -> None:

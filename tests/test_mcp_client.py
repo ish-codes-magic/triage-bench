@@ -31,7 +31,7 @@ def test_results_are_json_text_and_server_errors_are_outputs(tmp_path: Path) -> 
     assert not ok.is_error
     assert json.loads(ok.text)["title"] == "zipfile crashes on empty archive"
     assert refused.is_error
-    assert "not visible" in refused.text
+    assert "not available" in refused.text
 
 
 def test_one_session_serves_many_threads(tmp_path: Path) -> None:

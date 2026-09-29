@@ -26,6 +26,7 @@ build-backend = "uv_build"
 dev = [
     "actionlint-py>=1.7.12.25",
     "pre-commit>=4.6.2",
+    "pyarrow-stubs>=20.0.0.20260819",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.16.9",

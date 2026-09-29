@@ -23,6 +23,11 @@ triagelab llm ping
   └─ write_cost(run_dir)                   always, even on a budget stop
 ```
 
+**Smoke test (2026-09-29):** `triagelab llm ping` on Qwen3.5-9B @ deepinfra/bf16.
+- **First call:** `pong`, with 28 tokens in, 663 out, 32 s and **$0.00010225**. That's *exactly* the cost OpenRouter billed, which validates the price table and cost maths against a real invoice.
+- **Second call:** a cache hit at **$0.00 and 7 ms**, recording the saving.
+- **Finding:** 663 output tokens for one word. Qwen3.5 reasons by default, and the hidden reasoning tokens are billed and slow. Reasoning control becomes an explicit, measured knob in M4.
+
 ---
 
 ## 1. Concepts, and where they live

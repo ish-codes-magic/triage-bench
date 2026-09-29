@@ -1,0 +1,36 @@
+# Failure taxonomy (AGENTS.md §12.6). v0 = the seed categories, one open code each.
+# After the owner's open coding (~50 tagged failures in the review app), this file is
+# consolidated to 6-10 categories: each lists the open codes that map to it. The prose
+# version, with examples, lives in docs/FAILURE_TAXONOMY.md.
+version: 0
+categories:
+  - name: retrieval miss
+    definition: The information needed (an earlier issue, the right code) was never retrieved.
+    codes: [retrieval miss]
+  - name: correct evidence ignored
+    definition: A tool returned the right answer, but the final decision didn't use it.
+    codes: [correct evidence ignored]
+  - name: skill not loaded
+    definition: The repository skill would have prevented the error, but it was never loaded.
+    codes: [skill not loaded]
+  - name: skill misapplied
+    definition: The skill was loaded, but its guidance was misread or not followed.
+    codes: [skill misapplied]
+  - name: wrong component map
+    definition: The code location was found but mapped to the wrong component.
+    codes: [wrong component map]
+  - name: stopped too early
+    definition: The agent decided before gathering evidence it clearly needed.
+    codes: [stopped too early]
+  - name: hallucinated file or label
+    definition: The answer names a file, issue or label that doesn't exist or wasn't seen.
+    codes: [hallucinated file or label]
+  - name: budget exhaustion
+    definition: The step or tool budget forced an answer before the agent had converged.
+    codes: [budget exhaustion]
+  - name: output validation failure
+    definition: The answer failed schema validation, and the fallback was scored.
+    codes: [output validation failure]
+  - name: ground-truth noise
+    definition: The system's answer is defensible; the recorded truth is wrong or arbitrary.
+    codes: [ground-truth noise]

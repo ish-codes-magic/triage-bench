@@ -30,13 +30,13 @@ triagelab llm ping
 | Concept | What to take away | Code |
 |---|---|---|
 | **Canonical hashing** | Equal objects must hash equal on every machine. `hash()` is salted per process, and `json.dumps` depends on key order. So: sorted keys, fixed separators, UTF-8. | `src/triagelab/hashing.py`: `canonical_json`, `stable_hash` |
-| **Typed, layered config** | `extra="forbid"` turns typos into load errors. `extends:` makes each experiment a diff against the base. The fingerprint ties a run to its exact config. | `src/triagelab/config.py`: `load_config`, `deep_merge` (YOUR TURN), `Config.fingerprint`, `PortablePath` |
+| **Typed, layered config** | `extra="forbid"` turns typos into load errors. `extends:` makes each experiment a diff against the base. The fingerprint ties a run to its exact config. | `src/triagelab/config.py`: `load_config`, `deep_merge`, `Config.fingerprint`, `PortablePath` |
 | **Ports & adapters** | The client depends on a `Protocol`, not on LiteLLM. Only the adapter imports the vendor library, and the composition root decides which concrete classes go together. | `llm_client.py`: `CompletionBackend`; `litellm_backend.py`: `LiteLLMBackend`; `wiring.py`: `build_llm_client` |
 | **Budget hard stop** | Check the *worst case* before the call and charge the *actual* cost after. A check that only runs after the call can overshoot. | `cost.py`: `worst_case_cost_usd`, `BudgetGuard.check/charge` |
 | **Provable upper bound** | Instead of estimating tokens with a tokenizer, bound them: at most one token per UTF-8 byte for byte-level tokenizers. Over-counting is safe; under-counting isn't. | `llm_client.py`: `prompt_tokens_upper_bound` |
 | **Semantic cache keys** | The key contains everything that can change the answer and nothing that can't. The `sample` index gives k-run consistency samples distinct entries. | `llm_client.py`: `LLMRequest.cache_key`; `cache.py`: `DiskCache` |
 | **Atomic writes** | Write to a temp file, then `os.replace`. A crash leaves either the old entry or the new one, never half of one. | `cache.py`: `DiskCache.put` |
-| **Retries done right** | Retry only transient errors (408/409/429/5xx), use full-jitter backoff, treat the server's `Retry-After` as a floor, and have exactly one retry layer. | `retry.py`: `call_with_retries`, `backoff_delay` (YOUR TURN); `litellm_backend.py`: `is_retryable` |
+| **Retries done right** | Retry only transient errors (408/409/429/5xx), use full-jitter backoff, treat the server's `Retry-After` as a floor, and have exactly one retry layer. | `retry.py`: `call_with_retries`, `backoff_delay`; `litellm_backend.py`: `is_retryable` |
 | **Append-only ledger** | The all-time budget has to outlive the process. The spend so far is the sum of a JSONL file. | `ledger.py`: `SpendLedger` |
 | **Run provenance** | Every run records its resolved config, commit (flagged `-dirty` for uncommitted changes), versions and cost. Folders are claimed atomically and never overwritten. | `eval/registry.py`: `create_run`, `_claim_run_dir` |
 | **CI hardening** | Actions pinned to SHAs, least-privilege token, no persisted credentials, the same hooks locally and in CI, a two-OS matrix, and workflows linted with actionlint. | `.github/workflows/ci.yml`, `.github/actions/setup-env/action.yml`, `.pre-commit-config.yaml` |
@@ -141,7 +141,20 @@ What this means for the project:
 
 ---
 
-## 3. Pitfalls (most of these actually happened during M0)
+## 3. How the two exercises were solved
+
+**`deep_merge`** (`config.py`):
+- Start from `copy.deepcopy(base)`.
+- For each key in `override`: if both sides are dicts, recurse; otherwise take a deep copy of the override value.
+- **The trap:** `dict(base)` is only a *shallow* copy. A key present only in `base` would hand back the *same* nested dict, so editing the merged config would silently edit the parent too. `test_deep_merge_result_shares_nothing_with_base` pins this down.
+- **Why lists replace instead of concatenating:** an experiment must be able to *remove* a tool by restating the list.
+
+**`backoff_delay`** (`retry.py`):
+- The formula is `rng.uniform(0, min(cap, base * 2 ** attempt))`.
+- The exponent is clamped at 60, because `2.0 ** 1100` raises `OverflowError`, and past ~2⁶⁰ the cap wins anyway.
+- The random source is injected, so a test can pin it to the ceiling (`_MaxRng`) or seed it.
+
+## 4. Pitfalls (most of these actually happened during M0)
 
 1. **Path separators leak into hashes.** On Windows, `Path` serialized as `configs\prices.yaml`, so the same config fingerprinted differently per OS. Fix: `PortablePath` serializes as POSIX (commit `fix(config): …`).
 2. **Timestamp IDs collide.** Two runs started in the same second got the same ID and the second one crashed. Fix: claim the folder with an atomic `mkdir` loop and add `-2`, `-3` suffixes (commit `fix(registry): …`).
@@ -155,7 +168,7 @@ What this means for the project:
 
 ---
 
-## 4. How an interviewer might probe this
+## 5. How an interviewer might probe this
 
 - *"How do you enforce a hard spend cap when you don't know how long the output will be?"* → `max_tokens` bounds the output exactly, and bytes bound the input. Check the worst case before the call and charge the actual cost after.
 - *"Why not count tokens with tiktoken?"* → Every provider tokenizes differently, tokenizers need downloads, and an estimate can under-count. An upper bound can't under-count, and a budget check only needs a bound.
@@ -170,7 +183,7 @@ What this means for the project:
 
 ---
 
-## 5. Self-check questions
+## 6. Self-check questions
 
 1. `BudgetGuard.check` is called with a projection built from `prompt_tokens_upper_bound`. Name two ways the *actual* cost could still exceed the projection, and say why neither is possible here.
 2. You run the same `llm ping` on Windows and in CI on Linux. What guarantees the cache key and config fingerprint are identical?
@@ -183,7 +196,7 @@ What this means for the project:
 1. The two ways are (a) more output tokens than projected and (b) more input tokens than projected. (a) can't happen, because the provider stops at `max_tokens` and the projection assumes the full `max_tokens` at the output rate. (b) can't happen, because at most one token per UTF-8 byte (plus fixed overhead) is a ceiling for byte-level tokenizers. The projection also ignores cache discounts, which can only lower the real cost.
 2. `canonical_json` sorts keys and uses fixed separators and UTF-8. Paths serialize as POSIX through `PortablePath`. `.gitattributes` keeps every checked-in file LF on both OSes. Nothing machine-specific (timeouts, absolute paths in the request) goes into the key.
 3. Yes. `conftest.py` applies `xfail(raises=NotImplementedError)`, so only `NotImplementedError` is tolerated. An `AssertionError` means the implementation exists but is wrong, and that's a real failure.
-4. Dependency injection. The loop's own tests stay deterministic and independent of the YOUR TURN stub, and the policy (how long to wait) is separated from the mechanism (when to retry).
+4. Dependency injection. The loop's own tests stay deterministic (no real sleeping, no randomness), and the policy (how long to wait) is separated from the mechanism (when to retry).
 5. The attempts multiply (e.g. 3 × 4 = 12), the retries LiteLLM does are invisible to our traces and stats, the `attempts`/`retries` numbers in cost.json are wrong, and the overall latency is unpredictable.
 
 </details>

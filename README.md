@@ -65,6 +65,9 @@ flowchart LR
   - Keys cover only what can change the answer, plus a sample index so repeated samples for consistency measurement stay distinct.
   - Entries are written atomically.
   - The same files double as deterministic CI cassettes. → [ADR-0006](docs/DECISIONS.md#adr-0006-content-addressed-json-response-cache)
+- **Pinned model routes.**
+  - Small open-weight models (Qwen3.5-9B) are served via OpenRouter, with every call pinned to one provider *and* numeric precision. Otherwise one model name silently maps to fp4, fp8 and bf16 deployments.
+  - Models whose training cutoff isn't published are dated by their release, so none can have seen the evaluation issues. → [ADR-0010](docs/DECISIONS.md#adr-0010-small-open-weight-models-via-openrouter-pinned-per-role)
 - **The provider behind a protocol.**
   - LiteLLM lives in one adapter, with its import-time network fetch, hidden retries and silent parameter dropping all turned off.
   - Everything else is tested offline against a fake backend. → [ADR-0003](docs/DECISIONS.md#adr-0003-litellm-behind-our-own-client)
@@ -98,7 +101,7 @@ uv sync                          # Python 3.12 + locked dependencies
 uv run triagelab --help
 uv run triagelab config show     # the resolved config and its fingerprint
 
-cp .env.example .env             # add the API key for your configured model
+cp .env.example .env             # add OPENROUTER_API_KEY
 uv run triagelab llm ping        # one structured call: logged, costed, cached
 uv run triagelab llm ping        # the second one is a cache hit and costs $0
 uv run triagelab runs list       # run registry and all-time spend vs. budget

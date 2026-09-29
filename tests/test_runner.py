@@ -164,3 +164,17 @@ def test_results_table_and_compare(workspace: Path) -> None:
     rows = compare_runs(a.run_dir, b.run_dir, resamples=100)
     assert all(r.delta in (0.0, None) for r in rows)  # identical systems
     assert not any(r.significant for r in rows)
+
+
+def test_infrastructure_failures_are_retried_not_scored(
+    workspace: Path, fake_llm: FakeBackend
+) -> None:
+    # The first 2 backend calls fail (rate limited) and retries are exhausted immediately.
+    fake_llm.fail_first = 2
+    cfg = _config(workspace, "llm_single_shot")
+    cfg = cfg.model_copy(update={"retry": cfg.retry.model_copy(update={"max_attempts": 1})})
+    outcome = _run(cfg)
+    assert outcome.scorecard is not None
+    assert outcome.scorecard.system.errors == 0  # the retry pass recovered both issues
+    lines = read_jsonl(outcome.run_dir / "predictions.jsonl", TriageResult)
+    assert sum((p.error or "").startswith("infra: ") for p in lines) == 2  # history kept

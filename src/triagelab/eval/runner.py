@@ -39,6 +39,7 @@ from triagelab.llm_client import CallStats, LLMClient
 from triagelab.triage import Triager, TriageResult
 
 TEST_EVALUATION_LIMIT = 2
+INFRA_ERROR_PREFIX = "infra: "
 Log = Callable[[str], None]
 
 
@@ -139,12 +140,19 @@ def _timed(triager: Triager, example: EvalExample, run_id: str) -> TriageResult:
         result = triager.triage(example.snapshot)
     except BudgetExceededError:
         raise
-    except Exception as err:  # one bad issue must not sink the run; the failure is scored
+    except Exception as err:  # one bad issue must not sink the run
+        # Anything *raised* by a system is infrastructure (network, rate limit), not a model
+        # answer. Marked so a resume or the retry pass can re-run it instead of scoring it.
         result = TriageResult(
-            issue_ref=example.snapshot.issue_ref, error=f"{type(err).__name__}: {err}"
+            issue_ref=example.snapshot.issue_ref,
+            error=f"{INFRA_ERROR_PREFIX}{type(err).__name__}: {err}",
         )
     elapsed = round((time.perf_counter() - started) * 1000)
     return result.model_copy(update={"run_id": run_id, "latency_ms": result.latency_ms or elapsed})
+
+
+def _needs_run(result: TriageResult | None) -> bool:
+    return result is None or (result.error or "").startswith(INFRA_ERROR_PREFIX)
 
 
 def run_eval(
@@ -195,32 +203,41 @@ def run_eval(
     triager = build_triager(cfg, profile, client)
 
     predictions_path = run_dir / "predictions.jsonl"
+    # Later lines win, so a re-run issue replaces its earlier (failed) attempt.
     done = {p.issue_ref: p for p in read_jsonl(predictions_path, TriageResult)}
-    todo = [e for e in examples if e.snapshot.issue_ref not in done]
+    todo = [e for e in examples if _needs_run(done.get(e.snapshot.issue_ref))]
     stopped: str | None = None
     write_lock = threading.Lock()
 
-    with ThreadPoolExecutor(max_workers=cfg.eval.concurrency) as pool:
-        pending: set[Future[TriageResult]] = {pool.submit(_timed, triager, e, run_id) for e in todo}
-        finished = 0
-        while pending:
-            complete, pending = wait(pending, return_when=FIRST_COMPLETED)
-            for future in complete:
-                try:
-                    result = future.result()
-                except BudgetExceededError as err:
-                    stopped = f"budget: {err}"
-                    for f in pending:
-                        f.cancel()
-                    continue
-                with write_lock:
-                    append_jsonl(predictions_path, [result])
-                    done[result.issue_ref] = result
-                finished += 1
-                if finished % 10 == 0 or finished == len(todo):
-                    log(f"  {finished}/{len(todo)} issues")
-            if stopped:
-                break
+    def triage_all(batch: list[EvalExample], workers: int) -> str | None:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pending: set[Future[TriageResult]] = {
+                pool.submit(_timed, triager, e, run_id) for e in batch
+            }
+            finished = 0
+            while pending:
+                complete, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in complete:
+                    try:
+                        result = future.result()
+                    except BudgetExceededError as err:
+                        for f in pending:
+                            f.cancel()
+                        return f"budget: {err}"
+                    with write_lock:
+                        append_jsonl(predictions_path, [result])
+                        done[result.issue_ref] = result
+                    finished += 1
+                    if finished % 10 == 0 or finished == len(batch):
+                        log(f"  {finished}/{len(batch)} issues")
+        return None
+
+    stopped = triage_all(todo, cfg.eval.concurrency)
+    retry = [e for e in examples if _needs_run(done.get(e.snapshot.issue_ref))]
+    if stopped is None and retry:
+        # One slower pass for infrastructure failures (usually provider rate limits).
+        log(f"retrying {len(retry)} infrastructure failures with 1 worker")
+        stopped = triage_all(retry, 1)
 
     stats = clients[0].stats if clients else CallStats()
     write_cost(run_dir, stats)

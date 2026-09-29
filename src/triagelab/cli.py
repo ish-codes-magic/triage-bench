@@ -341,21 +341,30 @@ def retrieval_eval(
     """Recall@k and MRR for finding duplicates' originals (train/dev windows only)."""
     from triagelab.data.profile import load_profile
     from triagelab.retrieval.dense import Encoder
-    from triagelab.retrieval.evaluate import duplicate_queries, evaluate, render
+    from triagelab.retrieval.evaluate import compare_all, duplicate_queries, rank, render, score
     from triagelab.retrieval.index import load_searcher
 
     repo_profile = load_profile(profile)
     encoder: Encoder | None = None
+    notes: list[str] = []
     if dense:
         from triagelab.retrieval.encoders import ARCTIC_QUERY_PREFIX, FastEmbedEncoder
 
         encoder = FastEmbedEncoder(query_prefix=ARCTIC_QUERY_PREFIX if query_prefix else "")
+        prefix = f'`"{ARCTIC_QUERY_PREFIX.strip()}"`' if query_prefix else "none"
+        notes.append(f"Dense encoder: `{encoder.name}`; query prefix: {prefix}.")
     searcher = load_searcher(data_dir, repo_profile, encoder=encoder)
     queries = duplicate_queries(data_dir, repo_profile)
-    reports = [evaluate(searcher, queries, mode=mode) for mode in searcher.modes]
-    text = render(reports, repo_profile.repo)
+    rankings = [rank(searcher, queries, mode=mode) for mode in searcher.modes]
+    text = render(
+        [score(r) for r in rankings],
+        repo_profile.repo,
+        comparisons=compare_all(rankings),
+        notes=notes,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{repo_profile.slug}.md"
+    # The prefix ablation gets its own file so both reports stay regenerable side by side.
+    out = out_dir / f"{repo_profile.slug}{'-query-prefix' if dense and query_prefix else ''}.md"
     out.write_bytes(text.encode("utf-8"))
     typer.echo(text)
     typer.echo(f"written to {out.as_posix()}")

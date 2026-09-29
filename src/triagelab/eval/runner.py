@@ -93,6 +93,7 @@ class RunOutcome(BaseModel):
     total: int
     stopped_reason: str | None
     scorecard: Scorecard | None
+    spent_usd: float = 0.0  # money actually spent by this run (cache hits are free)
 
 
 def family_vocabulary(train: Sequence[EvalExample], min_count: int) -> list[str]:
@@ -295,4 +296,5 @@ def run_eval(
         total=len(examples),
         stopped_reason=stopped,
         scorecard=card,
+        spent_usd=stats.cost_usd,
     )

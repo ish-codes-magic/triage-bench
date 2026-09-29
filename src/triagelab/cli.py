@@ -259,7 +259,9 @@ def eval_cmd(
         typer.echo(f"  {name:20} {point:26} natural-rate: {weighted}")
     s = card.system
     typer.echo(
-        f"  cost ${s.cost_usd_total:.4f} (${s.cost_usd_per_issue:.5f}/issue) | "
+        # What the answers cost to produce, and what this run paid (0 if all cached).
+        f"  answers cost ${s.cost_usd_total:.4f} (${s.cost_usd_per_issue:.5f}/issue), "
+        f"spent this run ${outcome.spent_usd:.4f} | "
         f"p50 {s.latency_ms_p50 / 1000:.1f}s p95 {s.latency_ms_p95 / 1000:.1f}s | errors {s.errors}"
     )
 

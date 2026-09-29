@@ -126,7 +126,7 @@ class LLMSingleShotTriager:
 
         base = TriageResult(
             issue_ref=issue.issue_ref,
-            cost_usd=sum(r.cost_usd for r in responses),
+            cost_usd=sum(r.original_cost_usd for r in responses),  # true cost, even if cached
             latency_ms=sum(r.latency_ms for r in responses),
             tokens_in=sum(r.usage.tokens_in for r in responses),
             tokens_out=sum(r.usage.tokens_out for r in responses),

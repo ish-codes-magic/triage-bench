@@ -9,6 +9,7 @@ import pytest
 from triagelab.config import AgentConfig, LLMConfig
 from triagelab.data.snapshot import to_snapshot
 from triagelab.harness.agent import AgentAnswer, AgentTriager
+from triagelab.harness.loop import inline_schema
 from triagelab.harness.mcp_client import McpSession
 from triagelab.harness.tracing import RunTracer
 from triagelab.llm_client import ToolCall
@@ -154,3 +155,9 @@ def test_null_duplicate_may_be_spelled_as_text(spelled: object) -> None:
 
 def test_a_real_number_as_text_still_parses() -> None:
     assert AgentAnswer.model_validate({**ANSWER, "duplicate_of": "12"}).duplicate_of == 12
+
+
+def test_scored_fields_are_required_in_the_submit_schema() -> None:
+    # "Optional" reads as "skip me" to a model: every field we score must be required.
+    required = set(inline_schema(AgentAnswer)["required"])
+    assert {"labels", "component", "component_top3", "needs_info"} <= required

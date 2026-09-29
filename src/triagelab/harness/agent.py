@@ -25,7 +25,7 @@ from triagelab.prompting import UNTRUSTED_ISSUE, issue_prompt
 from triagelab.skills.loader import SkillSet
 from triagelab.triage import TriageResult
 
-PROMPT_VERSION = "1"  # bump with any change to SYSTEM_PROMPT or the answer schema
+PROMPT_VERSION = "2"  # bump with any change to SYSTEM_PROMPT or the answer schema
 
 
 class LabelGuess(BaseModel):
@@ -45,9 +45,9 @@ class AgentAnswer(BaseModel):
         "and OS labels that clearly apply."
     )
     component: str = Field(description="The component a fix would change, from the list.")
-    component_top3: list[str] = Field(
-        default_factory=list[str], description="Your 3 most likely components, best first."
-    )
+    # Required (iteration 3): with a default, the model omitted it on 77% of issues and
+    # top-3 accuracy silently became top-1.
+    component_top3: list[str] = Field(description="Your 3 most likely components, best first.")
     component_confidence: float = Field(ge=0.0, le=1.0)
     duplicate_of: int | None = Field(
         default=None, description="An earlier issue this one duplicates, or null."

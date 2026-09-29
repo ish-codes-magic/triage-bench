@@ -13,7 +13,7 @@ import random
 from collections import Counter
 from collections.abc import Sequence
 from datetime import date
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
@@ -24,6 +24,14 @@ from triagelab.data.profile import Minimums, RepoProfile
 Split = Literal["train", "dev", "test", "dev_reserve", "test_reserve", "excluded"]
 Flag = Literal["duplicate", "needs_info", "component"]
 FLAGS: tuple[Flag, ...] = ("duplicate", "needs_info", "component")
+
+
+def parse_split(value: str) -> Split:
+    """Validate a split name coming from the CLI or a stored manifest."""
+    for known in get_args(Split):
+        if value == known:
+            return known
+    raise ValueError(f"unknown split {value!r}; expected one of {get_args(Split)}")
 
 
 class Assignment(BaseModel):

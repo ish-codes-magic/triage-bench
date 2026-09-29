@@ -46,6 +46,8 @@ class RunManifest(BaseModel):
     triagelab_version: str
     python_version: str
     platform: str
+    # Run-specific context (split, dataset hash, system, model...), recorded for reproducibility.
+    details: dict[str, str] = {}
 
 
 def git_info(repo_root: Path) -> GitInfo:
@@ -72,7 +74,13 @@ def make_run_id(now: datetime, name: str, fingerprint: str) -> str:
 
 
 def create_run(
-    cfg: Config, *, runs_dir: Path, command: str, now: datetime, git: GitInfo
+    cfg: Config,
+    *,
+    runs_dir: Path,
+    command: str,
+    now: datetime,
+    git: GitInfo,
+    details: dict[str, str] | None = None,
 ) -> tuple[Path, RunManifest]:
     fingerprint = cfg.fingerprint()
     run_dir = _claim_run_dir(runs_dir, make_run_id(now, cfg.name, fingerprint))
@@ -86,6 +94,7 @@ def create_run(
         triagelab_version=__version__,
         python_version=sys.version.split()[0],
         platform=platform.platform(),
+        details=details or {},
     )
     (run_dir / "config.yaml").write_text(
         yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False), encoding="utf-8"

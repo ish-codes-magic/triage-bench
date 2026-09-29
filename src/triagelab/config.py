@@ -97,6 +97,31 @@ class PathsConfig(_Strict):
     ledger_file: PortablePath = Path("runs/spend_ledger.jsonl")
 
 
+SystemKind = Literal["majority", "classifier", "llm_single_shot"]
+
+
+class SystemConfig(_Strict):
+    """Which triage system an experiment evaluates, and its knobs."""
+
+    kind: SystemKind
+    max_body_chars: int = Field(default=12_000, gt=0)
+    # Labels need this many human-triaged training examples to be learned (classifier)
+    # or offered in the vocabulary (LLM): rarer ones can't be evaluated meaningfully.
+    min_label_count: int = Field(default=10, ge=1)
+
+
+class DatasetConfig(_Strict):
+    profile: PortablePath = Path("configs/repos/python__cpython.yaml")
+    data_dir: PortablePath = Path("data")
+    reports_dir: PortablePath = Path("reports")
+
+
+class EvalConfig(_Strict):
+    concurrency: int = Field(default=8, ge=1)
+    bootstrap_resamples: int = Field(default=1000, ge=100)
+    seed: int = 0
+
+
 class Config(_Strict):
     name: str
     budget: BudgetConfig
@@ -104,6 +129,9 @@ class Config(_Strict):
     retry: RetryConfig = RetryConfig()
     cache: CacheConfig = CacheConfig()
     paths: PathsConfig = PathsConfig()
+    dataset: DatasetConfig = DatasetConfig()
+    eval: EvalConfig = EvalConfig()
+    system: SystemConfig | None = None  # set by experiment configs
 
     def fingerprint(self) -> str:
         """Short stable hash of the resolved config, recorded with every run."""

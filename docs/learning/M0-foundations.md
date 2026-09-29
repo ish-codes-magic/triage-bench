@@ -76,7 +76,17 @@ What this means for the project:
   - An OpenAI-only set allows 2026-05-19 or later.
 - **The logprob arm of E6** is only confirmed feasible on GPT-6 Sol/Luna.
 
-### MCP ([spec changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [Python SDK](https://py.sdk.modelcontextprotocol.io/), [migration guide](https://py.sdk.modelcontextprotocol.io/migration/))
+### Chosen access path: OpenRouter + small open-weight models ([endpoints API](https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints), [provider routing](https://openrouter.ai/docs/features/provider-routing)); see ADR-0010
+- **No published cutoffs.** Neither DeepSeek nor Qwen publishes a training cutoff, so the release or listing date stands in as a conservative upper bound.
+  - That excludes every current DeepSeek model (released Aug–Sep 2026).
+  - Qwen3.5-9B and 27B (listed Feb–Mar 2026) are fine.
+- ⚠️ **One model name, several different models.** OpenRouter serves `qwen/qwen3.5-9b` from 6 providers at fp4, fp8 or bf16, and only 2 of them return logprobs.
+  - We pin each role with `provider: {only, quantizations, allow_fallbacks: false, require_parameters: true}`.
+  - `require_parameters` refuses a provider that would silently drop logprobs or the schema.
+- **Pinning must live in configuration, not a model string.** OpenRouter's `order`/`only` take provider slugs; the precision goes in a separate `quantizations` filter.
+- **LiteLLM passes it through.** It merges `extra_body` into the OpenRouter request and always asks for `usage.include`. So OpenRouter's *billed* cost comes back as `response_cost`, a real cross-check for our ledger.
+
+[spec changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [Python SDK](https://py.sdk.modelcontextprotocol.io/), [migration guide](https://py.sdk.modelcontextprotocol.io/migration/))
 - **Spec.** The current version is `2026-07-28`, and the protocol is now stateless:
   - the `initialize` handshake is removed, and servers must implement `server/discover`;
   - `Mcp-Session-Id` is removed;

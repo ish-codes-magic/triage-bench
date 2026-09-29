@@ -11,17 +11,10 @@ from typing import Any
 import pytest
 from mcp import Client
 
-from triagelab.data.profile import load_profile
-from triagelab.mcp_server.code_search import CodeSearcher
-from triagelab.mcp_server.codeowners import CodeOwners
 from triagelab.mcp_server.server import RepoIntel, build_server
-from triagelab.retrieval.corpus import build_corpus
 from triagelab.retrieval.search import HybridSearcher
 
-from .data_fixtures import raw
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROFILE = load_profile(REPO_ROOT / "configs" / "repos" / "python__cpython.yaml")
+from .mcp_fixtures import PROFILE, make_intel
 
 pytestmark = pytest.mark.anyio
 
@@ -33,39 +26,7 @@ def anyio_backend() -> str:
 
 @pytest.fixture
 def intel(tmp_path: Path) -> RepoIntel:
-    base = raw()
-    assert base.original_body is not None
-    issues = []
-    for n, title in (
-        (1, "zipfile crashes on empty archive"),
-        (2, "asyncio TaskGroup hangs"),
-        (3, "zipfile empty archive crash again"),
-    ):
-        created = base.created_at + timedelta(days=n - 1)
-        issues.append(
-            base.model_copy(
-                update={
-                    "number": n,
-                    "created_at": created,
-                    "title": title,
-                    "title_renames": (),
-                    "original_body": base.original_body.model_copy(
-                        update={"at": created, "body": title}
-                    ),
-                }
-            )
-        )
-    (tmp_path / "Lib").mkdir()
-    (tmp_path / "Lib" / "zipfile.py").write_text(
-        "def _EndRecData(fpin):\n    pass\n", encoding="utf-8"
-    )
-    return RepoIntel(
-        profile=PROFILE,
-        searcher=HybridSearcher(build_corpus(issues)),
-        code=CodeSearcher(tmp_path, use_ripgrep=False),
-        owners=CodeOwners.parse("/Lib/zipfile.py @zip-owner\n"),
-        checkout_commit="abc123",
-    )
+    return make_intel(tmp_path)
 
 
 async def call(intel: RepoIntel, tool: str, args: dict[str, Any]) -> Any:

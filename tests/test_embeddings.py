@@ -71,6 +71,15 @@ def test_build_is_resumable_and_keyed_by_number(tmp_path: Path) -> None:
     assert matrix.shape == (7, 26)
 
 
+def test_a_write_killed_midway_does_not_break_resume(tmp_path: Path) -> None:
+    embed_corpus(corpus_of(2), HashEncoder(), tmp_path, chunk_size=2)
+    (tmp_path / "chunk-00001.npz.tmp").write_bytes(b"truncated")  # what a kill leaves
+    assert embedded_numbers(tmp_path) == {1, 2}
+    assert embed_corpus(corpus_of(4), HashEncoder(), tmp_path, chunk_size=2) == 2
+    assert load_matrix(corpus_of(4), tmp_path).shape == (4, 26)
+    assert not list(tmp_path.glob("*.tmp"))  # the rename consumed it
+
+
 def test_missing_vectors_fail_loudly(tmp_path: Path) -> None:
     embed_corpus(corpus_of(3), HashEncoder(), tmp_path)
     with pytest.raises(ValueError, match="no embedding"):

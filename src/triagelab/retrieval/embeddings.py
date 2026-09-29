@@ -49,11 +49,17 @@ def embed_corpus(
     for start in range(0, len(todo), chunk_size):
         batch = todo[start : start + chunk_size]
         vectors = encoder.encode_documents([document_text(i) for i in batch])
-        np.savez(
-            directory / f"chunk-{next_id:05d}.npz",
-            numbers=np.array([i.number for i in batch], dtype=np.int64),
-            vectors=vectors.astype(np.float32),
-        )
+        # Write-then-rename: a job killed mid-write leaves a stray .tmp (ignored by
+        # _chunks), never a truncated chunk that would break every later load.
+        final = directory / f"chunk-{next_id:05d}.npz"
+        tmp = final.with_suffix(".npz.tmp")
+        with tmp.open("wb") as fh:
+            np.savez(
+                fh,
+                numbers=np.array([i.number for i in batch], dtype=np.int64),
+                vectors=vectors.astype(np.float32),
+            )
+        tmp.replace(final)
         next_id += 1
         log(f"  embedded {min(start + chunk_size, len(todo))}/{len(todo)}")
     return len(todo)

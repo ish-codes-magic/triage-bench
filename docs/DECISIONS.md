@@ -14,6 +14,10 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 | [0008](#adr-0008-ci-pre-commit-in-ci-sha-pinned-actions-two-oses) | CI: pre-commit in CI, SHA-pinned actions, two OSes | M0 |
 | [0009](#adr-0009-run-registry-one-immutable-folder-per-run) | Run registry: one immutable folder per run | M0 |
 | [0010](#adr-0010-small-open-weight-models-via-openrouter-pinned-per-role) | Small open-weight models via OpenRouter, pinned per role | M0 |
+| [0011](#adr-0011-primary-repo-is-pythoncpython-chosen-by-label-provenance) | Primary repo is python/cpython, chosen by label provenance | M1 |
+| [0012](#adr-0012-reconstruct-creation-time-text-and-refuse-when-unprovable) | Reconstruct creation-time text, and refuse when unprovable | M1 |
+| [0013](#adr-0013-silver-ground-truth-rules-with-provenance) | Silver ground-truth rules, with provenance | M1 |
+| [0014](#adr-0014-time-splits-with-stratified-weighted-small-samples) | Time splits with stratified, weighted small samples | M1 |
 
 ---
 
@@ -224,3 +228,91 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - One key, tiny costs, and more room for full-dev ablations and k-run consistency studies.
 - Small models will likely trip the output-validation retries more often. That becomes a measured failure category, not a hidden one.
 - Alibaba doesn't disclose the precision for the 27B route.
+
+## ADR-0011: Primary repo is python/cpython, chosen by label provenance
+
+**Context.**
+- AGENTS.md suggested `huggingface/transformers`, and a first scan looked fine: every repo showed 100% of issues labelled.
+- Counting *who applied each label* told a different story. In the eval window, transformers had human triage labels on **3%** of issues (12 of 365); the rest were issue-template labels the author picked. It also had **0** needs-info labels and 2 duplicates. T1 and T4 would have had no real ground truth.
+
+**Decision.**
+- **Primary: `python/cpython`.** In a sample of 400 window issues:
+  - 70% had human-applied labels;
+  - there was a clean type/area/topic taxonomy;
+  - 45 issues were closed as duplicates;
+  - 69 had the `pending` (needs-info) label;
+  - fixing PRs were linkable through the `gh-<issue>:` title convention.
+- **Transfer: `astral-sh/uv`, tentatively.** It supports all four tasks (a `needs-mre` label, 14 duplicates, area labels) in a very different codebase (Rust, packaging). It gets the same provenance check before M8.
+- **Selection method:** candidate repos are chosen by the label-provenance analysis, not by label counts.
+
+**Consequences.**
+- All four tasks have ground truth on the primary.
+- CPython-specific rules (the `pending` label, PR-title links, the directory→component map) live in `configs/repos/python__cpython.yaml`, not in code.
+- 95% of CPython bodies are edited after creation. That made reconstruction mandatory (ADR-0012).
+
+## ADR-0012: Reconstruct creation-time text, and refuse when unprovable
+
+**Context.**
+- The API returns the *current* title and body.
+- On CPython, a bot appends a "Linked PRs" section naming the fix to almost every issue. Reporters also edit their bodies ("EDIT: duplicate of #…").
+- Using the current text would leak the answer into the agent's input.
+
+**Decision.**
+- **Title:** the earliest `RenamedTitleEvent.previousTitle`.
+- **Body:** the oldest `userContentEdits` revision.
+  - It must be timestamped at creation, within 60 s.
+  - If an issue was edited and that can't be proven, it is **excluded** (`creation_text_unrecoverable`), not guessed.
+- **Past issues in the M3 index** always show their creation-time body. Labels and state are replayed strictly before `as_of`.
+- **Tests:** leakage tests (their own CI job, "Leakage guard") pin the snapshot's seven fields. They also assert that changing *any* post-creation field of a `RawIssue` leaves the snapshot unchanged, and adding a `RawIssue` field fails a test until it's classified.
+
+**Consequences.**
+- The agent sees what a triager saw at the moment the issue was opened.
+- **Known limitation:** `author_association` is reported as of collection, not creation (someone may have become a contributor since). The API offers no history, so this is documented in the dataset card.
+
+## ADR-0013: Silver ground-truth rules, with provenance
+
+**Context.**
+- Derived labels are noisy. To analyse that noise (silver vs. gold κ, M5), every label must record where it came from.
+
+**Decision** (implemented in `data/ground_truth.py`, restated in the dataset card):
+- **T1 (labels):**
+  - taxonomy labels present at collection;
+  - each tagged `author` (issue form or self-labelled), `triager`, `bot` or `unknown`;
+  - plus `human_triaged`, true if a non-author human added or removed a triage label.
+- **T2 (duplicates):** evidence is used in this order:
+  1. closed with the duplicate reason;
+  2. otherwise, the latest still-active "marked as duplicate" event;
+  3. otherwise, a "Duplicate of #N" comment from a triage role.
+
+  The original must have a smaller issue number, which means it was created earlier.
+- **T3 (component):**
+  - comes from the fixing PRs: merged into `main`, and either GitHub-linked or titled `gh-<issue>:`. Backports are excluded.
+  - Files map to components using the maintainers' own area-label descriptions.
+  - Primary components decide the vote. Tests and docs only decide when a fix touches nothing else, since nearly every fix ships a test.
+  - Ties are skipped.
+- **T4 (needs-info):** a human applied `pending` at any point.
+
+**Consequences.**
+- Every rule has hand-built test cases.
+- Label noise can be broken down by source.
+- Untriaged issues aren't mistaken for "no label applies".
+
+## ADR-0014: Time splits with stratified, weighted small samples
+
+**Context.**
+- The owner chose **100 dev / 50 test** issues, so they can be hand-labelled as gold.
+- At natural rates, 50 issues would contain about one duplicate.
+
+**Decision.**
+- **Time windows:**
+  - train: 2025-05-19 → 2026-05-18, which may predate model cutoffs (approved);
+  - dev: 2026-05-19 → 2026-07-18;
+  - test: 2026-07-19 → 2026-08-18, ending 6 weeks before collection so labels could settle.
+- **Sampling:** within each window, first meet per-task positive minimums, then fill uniformly (seeded).
+- **Weights:** each sampled issue stores its post-stratification weight `N_h / n_h`. Weighted metrics estimate natural-rate performance, and both views get reported.
+- **Reserves:** unsampled window issues become `dev_reserve` / `test_reserve`. Silver-only trends may use `dev_reserve`; `test_reserve` is never used for tuning.
+
+**Consequences.**
+- Every task has positives in both samples.
+- Confidence intervals will be wide at n = 50, and they'll be reported honestly.
+- The build is deterministic, and its dataset hash is recorded by every run.

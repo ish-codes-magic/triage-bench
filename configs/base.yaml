@@ -7,9 +7,11 @@ budget:
   usd_per_run: 5.0   # AGENTS.md §0: hard cap within one run
 
 llm:
-  # Placeholder until agent/small/judge models are chosen (end of M0).
-  # Any model used must have an entry in configs/prices.yaml, or calls are refused.
-  model: openai/gpt-6-luna
+  # The agent model (ADR-0010): Qwen3.5-9B via OpenRouter, pinned to one provider and
+  # precision so "the model" can't silently change between calls.
+  # Any model+route used must have an entry in configs/prices.yaml, or calls are refused.
+  model: openrouter/qwen/qwen3.5-9b
+  route: {provider: deepinfra, quantization: bf16}
   temperature: null   # null = provider default; many current models reject other values
   seed: null
   max_tokens: 1024

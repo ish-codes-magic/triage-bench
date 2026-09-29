@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from triagelab.config import load_config
 from triagelab.cost import (
     BudgetExceededError,
     BudgetGuard,
@@ -63,8 +64,15 @@ def test_guard_refuses_call_that_would_break_total_cap() -> None:
         guard.check(0.6)
 
 
-def test_repo_price_table_loads_and_prices_base_model() -> None:
+def test_repo_price_table_loads_and_rejects_unknown_models() -> None:
     table = load_price_table(REPO_ROOT / "configs" / "prices.yaml")
     assert table.price_for("openai/gpt-6-luna").input_per_mtok == 0.10
     with pytest.raises(UnknownModelPriceError):
         table.price_for("nope/unknown-model")
+
+
+def test_base_config_model_and_route_are_priced() -> None:
+    cfg = load_config(REPO_ROOT / "configs" / "base.yaml")
+    route = f"@{cfg.llm.route.tag}" if cfg.llm.route else ""
+    table = load_price_table(REPO_ROOT / "configs" / "prices.yaml")
+    table.price_for(f"{cfg.llm.model}{route}")  # raises if the default config is unpriced

@@ -13,6 +13,36 @@
 #     triage prompts stay far below those thresholds.
 
 models:
+  # --- OpenRouter (the key we actually use) ---
+  # Keyed "<model>@<provider>[/<quantization>]": the same model costs different amounts on
+  # different providers, and each route is pinned (ADR-0010). Source for every entry:
+  # https://openrouter.ai/api/v1/models/<model>/endpoints
+  openrouter/qwen/qwen3.5-9b@deepinfra/bf16:
+    input_per_mtok: 0.10
+    output_per_mtok: 0.15
+    source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints
+    verified_on: 2026-09-29
+    notes: Agent route. Tools + JSON schema at full precision; no logprobs on this provider.
+  openrouter/qwen/qwen3.5-9b@parasail/bf16:
+    input_per_mtok: 0.10
+    output_per_mtok: 0.25
+    source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints
+    verified_on: 2026-09-29
+    notes: Decision-backend route. Logprobs + JSON schema at full precision; no tools.
+  openrouter/qwen/qwen3.5-27b@alibaba:
+    input_per_mtok: 0.195
+    output_per_mtok: 1.56
+    source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-27b/endpoints
+    verified_on: 2026-09-29
+    notes: Proposed E5 size comparison (pending). Official provider; precision not disclosed.
+  openrouter/openai/gpt-6-luna@openai:
+    input_per_mtok: 0.10
+    output_per_mtok: 0.50
+    cached_input_per_mtok: 0.01
+    source: https://openrouter.ai/api/v1/models/openai/gpt-6-luna/endpoints
+    verified_on: 2026-09-29
+    notes: Judge route. Prompts >272K tokens bill at 0.20/0.75 (not modelled).
+
   # --- Anthropic ---
   anthropic/claude-fable-5-1:
     input_per_mtok: 10.00

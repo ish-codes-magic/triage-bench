@@ -1,0 +1,69 @@
+"""Load repo-intel's state from disk and serve it over stdio.
+
+    python -m triagelab.mcp_server --profile configs/repos/python__cpython.yaml
+    triagelab mcp serve --profile configs/repos/python__cpython.yaml
+
+For the MCP Inspector (Node >= 22.19):
+    npx @modelcontextprotocol/inspector uv run python -m triagelab.mcp_server -p <profile>
+"""
+
+import argparse
+from datetime import datetime
+from pathlib import Path
+
+from triagelab.data.checkout import CheckoutInfo, checkout_dir
+from triagelab.data.profile import load_profile
+from triagelab.mcp_server.code_search import CodeSearcher
+from triagelab.mcp_server.codeowners import CodeOwners
+from triagelab.mcp_server.server import RepoIntel, build_server
+from triagelab.retrieval.dense import Encoder
+from triagelab.retrieval.index import load_searcher
+
+
+def load_intel(
+    profile_path: Path,
+    data_dir: Path,
+    *,
+    dense: bool = True,
+    as_of_ceiling: datetime | None = None,
+) -> RepoIntel:
+    profile = load_profile(profile_path)
+    encoder: Encoder | None = None
+    if dense:
+        from triagelab.retrieval.encoders import FastEmbedEncoder
+
+        encoder = FastEmbedEncoder()
+    searcher = load_searcher(data_dir, profile, encoder=encoder)
+    root = checkout_dir(data_dir, profile)
+    info_path = root / "checkout.json"
+    commit = (
+        CheckoutInfo.model_validate_json(info_path.read_text(encoding="utf-8")).commit
+        if info_path.is_file()
+        else "unknown"
+    )
+    return RepoIntel(
+        profile=profile,
+        searcher=searcher,
+        code=CodeSearcher(root) if root.is_dir() else None,
+        owners=CodeOwners.from_checkout(root) if root.is_dir() else CodeOwners([]),
+        checkout_commit=commit,
+        as_of_ceiling=as_of_ceiling,
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="repo-intel", description=__doc__)
+    parser.add_argument("-p", "--profile", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, default=Path("data"))
+    parser.add_argument("--no-dense", action="store_true", help="BM25 only (no model load).")
+    parser.add_argument(
+        "--as-of-ceiling",
+        type=datetime.fromisoformat,
+        default=None,
+        help="Reject any as_of later than this ISO 8601 time.",
+    )
+    args = parser.parse_args(argv)
+    intel = load_intel(
+        args.profile, args.data_dir, dense=not args.no_dense, as_of_ceiling=args.as_of_ceiling
+    )
+    build_server(intel).run()  # stdio transport

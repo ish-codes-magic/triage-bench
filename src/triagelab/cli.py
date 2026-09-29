@@ -35,8 +35,12 @@ config_app = typer.Typer(help="Inspect configuration.", no_args_is_help=True)
 runs_app = typer.Typer(help="Inspect the run registry.", no_args_is_help=True)
 llm_app = typer.Typer(help="Talk to models through the cached, budgeted client.")
 data_app = typer.Typer(help="Collect and prepare datasets.", no_args_is_help=True)
+retrieval_app = typer.Typer(help="Build and evaluate the retrieval index.", no_args_is_help=True)
+mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 app.add_typer(data_app, name="data")
+app.add_typer(retrieval_app, name="retrieval")
+app.add_typer(mcp_app, name="mcp")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
@@ -277,3 +281,95 @@ def results(
     out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
     typer.echo(table)
     typer.echo(f"written to {out.as_posix()}")
+
+
+@data_app.command("checkout")
+def data_checkout(profile: ProfileOpt, data_dir: DataDirOpt = Path("data")) -> None:
+    """Download the source tree as of the last main-branch commit before eval_start."""
+    from triagelab.data.checkout import download_checkout
+    from triagelab.data.profile import load_profile
+
+    load_dotenv()
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        typer.echo("GITHUB_TOKEN is not set (see .env.example).", err=True)
+        raise typer.Exit(code=2)
+    info = download_checkout(load_profile(profile), data_dir, token)
+    typer.echo(f"checkout {info.repo}@{info.commit[:10]} ({info.committed_at:%Y-%m-%d %H:%M} UTC)")
+
+
+@retrieval_app.command("build")
+def retrieval_build(
+    profile: ProfileOpt,
+    data_dir: DataDirOpt = Path("data"),
+    dense: Annotated[bool, typer.Option("--dense/--no-dense")] = True,
+) -> None:
+    """Build the time-aware corpus and (resumably) embed it for dense retrieval."""
+    from triagelab.data.profile import load_profile
+    from triagelab.retrieval.embeddings import embed_corpus, store_dir
+    from triagelab.retrieval.index import build_corpus_from_raw, corpus_path, index_dir, write_meta
+
+    repo_profile = load_profile(profile)
+    corpus = build_corpus_from_raw(data_dir, repo_profile)
+    corpus.save(corpus_path(data_dir, repo_profile))
+    typer.echo(f"corpus: {len(corpus)} issues")
+    meta: dict[str, object] = {"documents": len(corpus)}
+    if dense:
+        from triagelab.retrieval.encoders import FastEmbedEncoder
+
+        encoder = FastEmbedEncoder()
+        added = embed_corpus(
+            corpus,
+            encoder,
+            store_dir(index_dir(data_dir, repo_profile), encoder.name),
+            log=typer.echo,
+        )
+        meta |= {"encoder": encoder.name, "embedded_now": added}
+    write_meta(data_dir, repo_profile, meta)
+
+
+@retrieval_app.command("eval")
+def retrieval_eval(
+    profile: ProfileOpt,
+    data_dir: DataDirOpt = Path("data"),
+    dense: Annotated[bool, typer.Option("--dense/--no-dense")] = True,
+    query_prefix: Annotated[
+        bool, typer.Option("--query-prefix/--no-query-prefix", help="arctic-embed query prefix.")
+    ] = False,
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/retrieval"),
+) -> None:
+    """Recall@k and MRR for finding duplicates' originals (train/dev windows only)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.retrieval.dense import Encoder
+    from triagelab.retrieval.evaluate import duplicate_queries, evaluate, render
+    from triagelab.retrieval.index import load_searcher
+
+    repo_profile = load_profile(profile)
+    encoder: Encoder | None = None
+    if dense:
+        from triagelab.retrieval.encoders import ARCTIC_QUERY_PREFIX, FastEmbedEncoder
+
+        encoder = FastEmbedEncoder(query_prefix=ARCTIC_QUERY_PREFIX if query_prefix else "")
+    searcher = load_searcher(data_dir, repo_profile, encoder=encoder)
+    queries = duplicate_queries(data_dir, repo_profile)
+    reports = [evaluate(searcher, queries, mode=mode) for mode in searcher.modes]
+    text = render(reports, repo_profile.repo)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{repo_profile.slug}.md"
+    out.write_bytes(text.encode("utf-8"))
+    typer.echo(text)
+    typer.echo(f"written to {out.as_posix()}")
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    profile: ProfileOpt,
+    data_dir: DataDirOpt = Path("data"),
+    dense: Annotated[bool, typer.Option("--dense/--no-dense")] = True,
+) -> None:
+    """Serve repo-intel over stdio (for MCP clients and the MCP Inspector)."""
+    from triagelab.mcp_server.app import main as serve
+
+    serve(
+        ["--profile", str(profile), "--data-dir", str(data_dir), *([] if dense else ["--no-dense"])]
+    )

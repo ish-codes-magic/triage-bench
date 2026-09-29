@@ -38,6 +38,9 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
 ]
+labeling = [
+    "streamlit==1.64.0",
+]
 
 [tool.ruff]
 line-length = 100
@@ -77,3 +80,8 @@ markers = [
     "your_turn: a YOUR TURN exercise; xfails until the stub is implemented (run with -m your_turn --runxfail to see it fail)",
     "leakage: guards that nothing from after an issue's creation reaches the agent (own CI check)",
 ]
+
+[tool.uv]
+# The labeling app (M5) is a separate group so it can be skipped (`--no-group labeling`),
+# but it installs by default so CI tests it.
+default-groups = ["dev", "labeling"]

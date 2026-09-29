@@ -11,7 +11,7 @@ an ablation without anyone noticing.
 
 import copy
 from pathlib import Path
-from typing import Annotated, Any, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
@@ -31,6 +31,11 @@ class _Strict(BaseModel):
 class BudgetConfig(_Strict):
     usd_total: float = Field(gt=0, description="Hard cap on spend across all runs, ever.")
     usd_per_run: float = Field(gt=0, description="Hard cap on spend within a single run.")
+
+
+# How much hidden "thinking" to allow. "default" sends nothing (the model decides);
+# "none" disables it. Qwen3.5 thinks by default: 663 output tokens and 32 s for "pong".
+ReasoningEffort = Literal["default", "none", "minimal", "low", "medium", "high"]
 
 
 class ProviderRoute(_Strict):
@@ -62,6 +67,7 @@ class LLMConfig(_Strict):
 
     model: str = Field(description="LiteLLM model string, e.g. 'openrouter/qwen/qwen3.5-9b'.")
     route: ProviderRoute | None = None
+    reasoning: ReasoningEffort = "default"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     seed: int | None = None
     max_tokens: int = Field(default=1024, gt=0)

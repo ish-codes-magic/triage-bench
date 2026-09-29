@@ -1,3 +1,4 @@
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -51,17 +52,48 @@ def test_worst_case_assumes_full_output_budget() -> None:
 
 def test_guard_refuses_call_that_would_break_run_cap() -> None:
     guard = BudgetGuard(per_run_usd=1.0, total_usd=100.0, spent_before_run_usd=0.0)
-    guard.charge(0.95)
-    guard.check(0.05)  # exactly at the cap is allowed
+    guard.reserve(0.95)
+    guard.settle(0.95, 0.95)
+    guard.reserve(0.05)  # exactly at the cap is allowed
+    guard.release(0.05)
     with pytest.raises(BudgetExceededError, match="run cap"):
-        guard.check(0.06)
+        guard.reserve(0.06)
 
 
 def test_guard_refuses_call_that_would_break_total_cap() -> None:
     guard = BudgetGuard(per_run_usd=5.0, total_usd=150.0, spent_before_run_usd=149.5)
     assert guard.remaining_run_usd == pytest.approx(0.5)
     with pytest.raises(BudgetExceededError):
-        guard.check(0.6)
+        guard.reserve(0.6)
+
+
+def test_reservations_count_against_the_cap_until_settled() -> None:
+    guard = BudgetGuard(per_run_usd=1.0, total_usd=100.0, spent_before_run_usd=0.0)
+    guard.reserve(0.6)  # in flight
+    with pytest.raises(BudgetExceededError):
+        guard.reserve(0.6)  # would only fit if the first were ignored
+    guard.settle(0.6, 0.1)  # the call was cheaper than its worst case
+    assert guard.spent_run_usd == pytest.approx(0.1)
+    assert guard.remaining_run_usd == pytest.approx(0.9)
+
+
+def test_parallel_reservations_never_overshoot() -> None:
+    guard = BudgetGuard(per_run_usd=1.0, total_usd=100.0, spent_before_run_usd=0.0)
+    granted: list[int] = []
+
+    def worker(i: int) -> None:
+        try:
+            guard.reserve(0.3)
+            granted.append(i)
+        except BudgetExceededError:
+            pass
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert len(granted) == 3  # 3 * 0.3 <= 1.0 < 4 * 0.3
 
 
 def test_repo_price_table_loads_and_rejects_unknown_models() -> None:

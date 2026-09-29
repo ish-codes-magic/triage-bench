@@ -119,6 +119,7 @@ def llm_ping(
         max_tokens=cfg.llm.max_tokens,
         temperature=cfg.llm.temperature,
         seed=cfg.llm.seed,
+        reasoning=cfg.llm.reasoning,
     )
     try:
         pong, response = client.complete_structured(request, Pong)

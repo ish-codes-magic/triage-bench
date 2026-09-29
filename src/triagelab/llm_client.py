@@ -6,6 +6,7 @@ responses through the cache. This module never imports a provider SDK.
 """
 
 import random
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -14,7 +15,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from triagelab.cache import DiskCache
-from triagelab.config import ProviderRoute, RetryConfig
+from triagelab.config import ProviderRoute, ReasoningEffort, RetryConfig
 from triagelab.cost import BudgetGuard, PriceTable, Usage, cost_usd, worst_case_cost_usd
 from triagelab.hashing import canonical_json, stable_hash
 from triagelab.ledger import SpendEntry, SpendLedger
@@ -54,6 +55,7 @@ class LLMRequest(BaseModel):
     seed: int | None = None
     response_schema: dict[str, Any] | None = None
     schema_name: str | None = None
+    reasoning: ReasoningEffort = "default"
     sample: int = Field(default=0, ge=0)
 
     def price_key(self) -> str:
@@ -125,11 +127,14 @@ class CallStats(BaseModel):
     retries: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    reasoning_tokens: int = 0
     cost_usd: float = 0.0
     saved_by_cache_usd: float = 0.0
 
 
 class LLMClient:
+    """Thread-safe: the eval runner calls one client from several worker threads."""
+
     def __init__(
         self,
         *,
@@ -158,6 +163,7 @@ class LLMClient:
         self._sleep = sleep
         self._clock = clock
         self._now = now
+        self._lock = threading.Lock()  # guards stats and ledger writes
         self.stats = CallStats()
 
     def complete(self, request: LLMRequest) -> LLMResponse:
@@ -167,15 +173,18 @@ class LLMClient:
 
         if self._cache is not None and (hit := self._cache.get(key)) is not None:
             cached = LLMResponse.model_validate(hit)
-            self.stats.calls += 1
-            self.stats.cache_hits += 1
-            self.stats.saved_by_cache_usd += cached.original_cost_usd
+            with self._lock:
+                self.stats.calls += 1
+                self.stats.cache_hits += 1
+                self.stats.saved_by_cache_usd += cached.original_cost_usd
             return cached.model_copy(
                 update={"cache_hit": True, "cost_usd": 0.0, "latency_ms": self._ms_since(started)}
             )
 
-        prompt_tokens = prompt_tokens_upper_bound(request)
-        self._guard.check(worst_case_cost_usd(prompt_tokens, request.max_tokens, price))
+        projected = worst_case_cost_usd(
+            prompt_tokens_upper_bound(request), request.max_tokens, price
+        )
+        self._guard.reserve(projected)
 
         attempts = 0
 
@@ -184,31 +193,39 @@ class LLMClient:
             attempts += 1
             return self._backend.complete(request, timeout_s=self._timeout_s)
 
-        completion = call_with_retries(
-            attempt,
-            max_attempts=self._retry.max_attempts,
-            is_retryable=self._backend.is_retryable,
-            delay=lambda n: backoff_delay(
-                n, base_s=self._retry.base_delay_s, cap_s=self._retry.max_delay_s, rng=self._rng
-            ),
-            retry_after=self._backend.retry_after_s,
-            sleep=self._sleep,
-        )
-        spent = cost_usd(completion.usage, price)
-        self._guard.charge(spent)
-        self._ledger.record(
-            SpendEntry(
-                at=self._now(),
-                run_id=self._run_id,
-                model=request.price_key(),
-                resolved_model=completion.resolved_model,
-                tokens_in=completion.usage.tokens_in,
-                tokens_out=completion.usage.tokens_out,
-                cached_tokens_in=completion.usage.cached_tokens_in,
-                cost_usd=spent,
-                litellm_cost_usd=completion.litellm_cost_usd,
+        try:
+            completion = call_with_retries(
+                attempt,
+                max_attempts=self._retry.max_attempts,
+                is_retryable=self._backend.is_retryable,
+                delay=lambda n: backoff_delay(
+                    n,
+                    base_s=self._retry.base_delay_s,
+                    cap_s=self._retry.max_delay_s,
+                    rng=self._rng,
+                ),
+                retry_after=self._backend.retry_after_s,
+                sleep=self._sleep,
             )
-        )
+        except BaseException:
+            self._guard.release(projected)  # failed calls are not billed
+            raise
+        spent = cost_usd(completion.usage, price)
+        self._guard.settle(projected, spent)
+        with self._lock:
+            self._ledger.record(
+                SpendEntry(
+                    at=self._now(),
+                    run_id=self._run_id,
+                    model=request.price_key(),
+                    resolved_model=completion.resolved_model,
+                    tokens_in=completion.usage.tokens_in,
+                    tokens_out=completion.usage.tokens_out,
+                    cached_tokens_in=completion.usage.cached_tokens_in,
+                    cost_usd=spent,
+                    litellm_cost_usd=completion.litellm_cost_usd,
+                )
+            )
         response = LLMResponse(
             text=completion.text,
             model=request.model,
@@ -220,11 +237,13 @@ class LLMClient:
             latency_ms=self._ms_since(started),
             attempts=attempts,
         )
-        self.stats.calls += 1
-        self.stats.retries += attempts - 1
-        self.stats.tokens_in += completion.usage.tokens_in
-        self.stats.tokens_out += completion.usage.tokens_out
-        self.stats.cost_usd += spent
+        with self._lock:
+            self.stats.calls += 1
+            self.stats.retries += attempts - 1
+            self.stats.tokens_in += completion.usage.tokens_in
+            self.stats.tokens_out += completion.usage.tokens_out
+            self.stats.reasoning_tokens += completion.usage.reasoning_tokens
+            self.stats.cost_usd += spent
         if self._cache is not None:
             self._cache.put(key, response.model_dump(mode="json"))
         return response

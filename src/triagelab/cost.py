@@ -4,6 +4,7 @@ Everything here is pure: no network, no clock, no files except `load_price_table
 That keeps the money logic trivially testable with hand-computed numbers.
 """
 
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,9 @@ class Usage(BaseModel):
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)
     cached_tokens_in: int = Field(default=0, ge=0)
+    # Hidden "thinking" tokens: already included in tokens_out (and billed), kept separately
+    # so the cost of reasoning can be measured.
+    reasoning_tokens: int = Field(default=0, ge=0)
 
 
 def cost_usd(usage: Usage, price: ModelPrice) -> float:
@@ -92,10 +96,12 @@ class BudgetExceededError(RuntimeError):
 
 
 class BudgetGuard:
-    """Enforces the per-run and all-time budgets as a hard stop.
+    """Enforces the per-run and all-time budgets as a hard stop, safely under concurrency.
 
-    Check before every call with the worst-case projection, then charge the actual cost
-    after it. Checking only after the fact would let one large call overshoot the cap.
+    Before a call, `reserve` claims its worst-case cost; after it, `settle` swaps that
+    reservation for the actual cost (or `release` returns it if the call failed).
+    Reserving, rather than merely checking, matters with parallel calls: eight threads
+    that all "check" before any has been charged could together overshoot the cap.
     """
 
     def __init__(self, *, per_run_usd: float, total_usd: float, spent_before_run_usd: float):
@@ -103,6 +109,8 @@ class BudgetGuard:
         self._total_usd = total_usd
         self._spent_before_run_usd = spent_before_run_usd
         self._spent_run_usd = 0.0
+        self._reserved_usd = 0.0
+        self._lock = threading.Lock()
 
     @property
     def spent_run_usd(self) -> float:
@@ -110,18 +118,27 @@ class BudgetGuard:
 
     @property
     def remaining_run_usd(self) -> float:
-        run_room = self._per_run_usd - self._spent_run_usd
-        total_room = self._total_usd - self._spent_before_run_usd - self._spent_run_usd
+        committed = self._spent_run_usd + self._reserved_usd
+        run_room = self._per_run_usd - committed
+        total_room = self._total_usd - self._spent_before_run_usd - committed
         return max(0.0, min(run_room, total_room))
 
-    def check(self, projected_usd: float) -> None:
-        if projected_usd > self.remaining_run_usd:
-            raise BudgetExceededError(
-                f"Refusing call: worst case ${projected_usd:.4f} exceeds remaining budget "
-                f"${self.remaining_run_usd:.4f} (run cap ${self._per_run_usd:.2f}, "
-                f"total cap ${self._total_usd:.2f}, spent before this run "
-                f"${self._spent_before_run_usd:.2f})."
-            )
+    def reserve(self, projected_usd: float) -> None:
+        with self._lock:
+            if projected_usd > self.remaining_run_usd:
+                raise BudgetExceededError(
+                    f"Refusing call: worst case ${projected_usd:.4f} exceeds remaining budget "
+                    f"${self.remaining_run_usd:.4f} (run cap ${self._per_run_usd:.2f}, "
+                    f"total cap ${self._total_usd:.2f}, spent before this run "
+                    f"${self._spent_before_run_usd:.2f})."
+                )
+            self._reserved_usd += projected_usd
 
-    def charge(self, actual_usd: float) -> None:
-        self._spent_run_usd += actual_usd
+    def settle(self, projected_usd: float, actual_usd: float) -> None:
+        with self._lock:
+            self._reserved_usd -= projected_usd
+            self._spent_run_usd += actual_usd
+
+    def release(self, projected_usd: float) -> None:
+        with self._lock:
+            self._reserved_usd -= projected_usd

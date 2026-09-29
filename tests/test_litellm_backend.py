@@ -61,3 +61,22 @@ def test_routed_request_pins_one_provider_and_precision() -> None:
         }
     }
     assert params["num_retries"] == 0
+
+
+def test_reasoning_effort_goes_to_openrouter_extra_body() -> None:
+    routed = REQUEST.model_copy(
+        update={
+            "model": "openrouter/qwen/qwen3.5-9b",
+            "route": ProviderRoute(provider="deepinfra", quantization="bf16"),
+            "reasoning": "none",
+        }
+    )
+    body = build_params(routed, timeout_s=5)["extra_body"]
+    assert body["reasoning"] == {"effort": "none"}
+    assert body["provider"]["only"] == ["deepinfra"]
+
+
+def test_default_reasoning_sends_nothing() -> None:
+    params = build_params(REQUEST, timeout_s=5)
+    assert "reasoning_effort" not in params
+    assert "extra_body" not in params

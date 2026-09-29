@@ -89,9 +89,18 @@ def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
                 "strict": True,
             },
         }
+    extra_body: dict[str, Any] = {}
     if request.route is not None:
         # LiteLLM merges `extra_body` into the JSON it sends to OpenRouter.
-        params["extra_body"] = {"provider": openrouter_provider_prefs(request.route)}
+        extra_body["provider"] = openrouter_provider_prefs(request.route)
+    if request.reasoning != "default":
+        if request.model.startswith("openrouter/"):
+            # OpenRouter's unified control; "none" turns thinking off entirely.
+            extra_body["reasoning"] = {"effort": request.reasoning}
+        else:
+            params["reasoning_effort"] = request.reasoning
+    if extra_body:
+        params["extra_body"] = extra_body
     return params
 
 
@@ -116,6 +125,7 @@ def openrouter_provider_prefs(route: ProviderRoute) -> dict[str, Any]:
 def _to_completion(response: Any) -> Completion:
     usage = response.usage
     details = getattr(usage, "prompt_tokens_details", None)
+    out_details = getattr(usage, "completion_tokens_details", None)
     hidden: dict[str, Any] = getattr(response, "_hidden_params", None) or {}
     return Completion(
         text=response.choices[0].message.content or "",
@@ -125,6 +135,7 @@ def _to_completion(response: Any) -> Completion:
             tokens_in=int(usage.prompt_tokens),
             tokens_out=int(usage.completion_tokens),
             cached_tokens_in=int(getattr(details, "cached_tokens", 0) or 0),
+            reasoning_tokens=int(getattr(out_details, "reasoning_tokens", 0) or 0),
         ),
         litellm_cost_usd=hidden.get("response_cost"),
     )

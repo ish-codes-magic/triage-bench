@@ -286,11 +286,14 @@ def compare(
     exclude_errors: Annotated[
         bool, typer.Option("--exclude-errors", help="Skip issues where either run fell back.")
     ] = False,
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "silver",
 ) -> None:
     """Paired-bootstrap comparison of two runs (B - A) on the issues both predicted."""
     from triagelab.eval.report import compare_runs, render_comparison
 
-    rows = compare_runs(run_a, run_b, exclude_errors=exclude_errors)
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    rows = compare_runs(run_a, run_b, exclude_errors=exclude_errors, labels=labels)
     typer.echo(render_comparison(rows, run_a.name, run_b.name))
 
 
@@ -299,15 +302,24 @@ def results(
     split: str = "dev",
     config: ConfigOpt = DEFAULT_CONFIG,
     out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/results"),
+    labels: Annotated[str, typer.Option(help="silver | gold (adds the human baseline)")] = "silver",
 ) -> None:
     """Write the results table (latest run per experiment) to reports/results/<split>.md."""
-    from triagelab.eval.report import load_scored_runs, results_table
+    from triagelab.data.splits import parse_split
+    from triagelab.eval.report import load_scored_runs, rescore_on_gold, results_table
 
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
-    table = results_table(load_scored_runs(cfg.paths.runs_dir), split)
+    runs = load_scored_runs(cfg.paths.runs_dir)
+    if labels == "gold":
+        runs = rescore_on_gold(runs, cfg.paths.runs_dir, cfg, parse_split(split))
+    table = results_table(runs, split)
+    if labels == "gold":
+        table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{split}.md"
-    heading = f"# Results: {split} split"
+    out = out_dir / (f"{split}.md" if labels == "silver" else f"{split}-gold.md")
+    heading = f"# Results: {split} split ({labels} labels)"
     out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
     typer.echo(table)
     typer.echo(f"written to {out.as_posix()}")
@@ -525,5 +537,53 @@ def judge_calibrate(
     typer.echo(f"cost ${client.stats.cost_usd:.4f}")
     if split == "judge-test":
         guard.record(rubric.version)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))
+
+
+@app.command("gold-report")
+def gold_report(
+    split: str = "dev",
+    config: ConfigOpt = DEFAULT_CONFIG,
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/gold"),
+) -> None:
+    """Label noise (silver vs gold kappa), what the evidence changed, and labeling time."""
+    from statistics import median
+
+    from triagelab.data.profile import load_profile
+    from triagelab.data.splits import parse_split
+    from triagelab.eval.dataset import load_split
+    from triagelab.eval.gold_labels import agreement_by_task, gold_from, render_agreement, usable
+    from triagelab.labeling.gold import GoldStore, gold_path, label_vocabulary
+
+    cfg = load_config(config)
+    profile = load_profile(cfg.dataset.profile)
+    data_dir = cfg.dataset.data_dir
+    records = usable(GoldStore(gold_path(data_dir, profile)).load())
+    silver = {
+        e.snapshot.issue_ref: e.gold for e in load_split(data_dir, profile, parse_split(split))
+    }
+    done = [r for ref, r in records.items() if ref in silver and r.final is not None]
+    if not done:
+        typer.echo(f"No adjudicated {split} issues yet: label them with `triagelab label`.")
+        raise typer.Exit(1)
+    vocab = [label for group in label_vocabulary(data_dir, profile).values() for label in group]
+    finals = [gold_from(r.final, profile) for r in done if r.final is not None]
+    blinds = [gold_from(r.blind, profile) for r in done]
+    sections = [
+        f"# Gold labels: {split} ({len(done)} issues adjudicated)",
+        "## Label noise: silver vs gold",
+        render_agreement(
+            agreement_by_task(
+                [(silver[r.issue_ref], g) for r, g in zip(done, finals, strict=True)], vocab
+            ),
+            "task",
+        ),
+        "## What the evidence changed: blind vs final (same person)",
+        render_agreement(agreement_by_task(list(zip(blinds, finals, strict=True)), vocab), "task"),
+        f"Median blind-pass time: {median(r.blind_seconds for r in done):.0f} s per issue.",
+    ]
+    text = "\n\n".join(sections) + "\n"
+    typer.echo(text)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))

@@ -38,11 +38,13 @@ data_app = typer.Typer(help="Collect and prepare datasets.", no_args_is_help=Tru
 retrieval_app = typer.Typer(help="Build and evaluate the retrieval index.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=True)
 judge_app = typer.Typer(help="Sample and calibrate the T5 comment judge.", no_args_is_help=True)
+failures_app = typer.Typer(help="Tag failures and validate the tagger.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 app.add_typer(data_app, name="data")
 app.add_typer(retrieval_app, name="retrieval")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(judge_app, name="judge")
+app.add_typer(failures_app, name="failures")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
@@ -587,3 +589,82 @@ def gold_report(
     typer.echo(text)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))
+
+
+@failures_app.command("tag")
+def failures_tag(
+    run_dir: Annotated[Path, typer.Argument(help="An agent run folder.")],
+    labels: Annotated[str, typer.Option(help="silver | gold")] = "silver",
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    taxonomy_path: Annotated[Path, typer.Option("--taxonomy")] = Path(
+        "configs/failures/taxonomy.yaml"
+    ),
+) -> None:
+    """Tag every failure of a run with the LLM tagger; writes <run>/failures.parquet."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from triagelab.eval.failure_tagger import (
+        FailureTagger,
+        TaggedFailure,
+        load_taxonomy,
+        write_failures,
+    )
+    from triagelab.eval.failures import Failure, find_failures
+    from triagelab.eval.report import examples_for, load_run
+    from triagelab.harness.trace_stats import load_events
+
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    load_dotenv()
+    cfg = load_config(config)
+    taxonomy = load_taxonomy(taxonomy_path)
+    run_cfg, split, _ = load_run(run_dir)
+    predictions, events = load_events(run_dir)
+    examples = examples_for(run_cfg, split, labels)
+    titles = {e.snapshot.issue_ref: e.snapshot.title for e in examples}
+    failures = find_failures(examples, predictions)
+    client = wiring.build_llm_client(cfg, run_id=f"{run_dir.name}-failures")
+    tagger = FailureTagger(client, cfg.llm, taxonomy)
+
+    def one(failure: Failure) -> TaggedFailure:
+        return tagger.tag(failure, events.get(failure.trace_id, []), titles[failure.issue_ref])
+
+    with ThreadPoolExecutor(max_workers=cfg.eval.concurrency) as pool:
+        tagged = list(pool.map(one, failures))
+    write_failures(run_dir, tagged, taxonomy.version)
+    typer.echo(f"{len(tagged)} failures tagged; cost ${client.stats.cost_usd:.4f}")
+
+
+@failures_app.command("validate")
+def failures_validate(
+    run_dir: Annotated[Path, typer.Argument(help="A run tagged by both the person and the LLM.")],
+    config: ConfigOpt = DEFAULT_CONFIG,
+    taxonomy_path: Annotated[Path, typer.Option("--taxonomy")] = Path(
+        "configs/failures/taxonomy.yaml"
+    ),
+) -> None:
+    """Agreement between the person's failure tags and the LLM tagger's, per category."""
+    from triagelab.data.storage import read_parquet
+    from triagelab.eval.failure_tagger import (
+        FAILURES_FILE,
+        human_categories,
+        load_taxonomy,
+        tag_agreement,
+    )
+    from triagelab.labeling.failure_tags import FailureTagStore
+
+    cfg = load_config(config)
+    taxonomy = load_taxonomy(taxonomy_path)
+    tags = FailureTagStore(cfg.dataset.data_dir).load()
+    human = {
+        ref: human_categories(tag, taxonomy)
+        for (run_id, ref), tag in tags.items()
+        if run_id == run_dir.name
+    }
+    llm = {r["issue_ref"]: set(r["categories"]) for r in read_parquet(run_dir / FAILURES_FILE)}
+    rows, exact, jaccard = tag_agreement(human, llm, taxonomy.names())
+    typer.echo(f"{rows[0].n if rows else 0} failures tagged by both")
+    typer.echo(f"exact category-set agreement {exact:.2f}, mean Jaccard {jaccard:.2f}")
+    for r in rows:
+        kappa = "n/a" if r.kappa is None else f"{r.kappa:.2f}"
+        typer.echo(f"  {r.category:28} human {r.human:3}  llm {r.llm:3}  kappa {kappa}")

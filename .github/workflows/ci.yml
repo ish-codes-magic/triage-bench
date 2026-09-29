@@ -44,8 +44,10 @@ jobs:
         run: uv run pytest -q -m leakage
 
   eval-smoke:
-    # Evals as tests: run the baselines through the real `triagelab eval` CLI on a synthetic
-    # dataset (no GitHub or model access), and post the results table to the job summary.
+    # Evals as tests: run the baselines and the agent through the real `triagelab eval` CLI
+    # on a synthetic dataset, and post the results to the job summary. The agent's model
+    # calls replay recorded responses (tests/cassettes/): no API key, no spend, and any
+    # unrecorded request fails the job. repo-intel runs as a real stdio subprocess.
     name: Eval smoke (fixtures)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -60,11 +62,27 @@ jobs:
         run: |
           uv run triagelab eval -c "$RUNNER_TEMP/smoke/majority.yaml" --split dev
           uv run triagelab eval -c "$RUNNER_TEMP/smoke/classifier.yaml" --split dev
+      - name: Evaluate the agent (replayed from cassettes)
+        run: uv run triagelab eval -c "$RUNNER_TEMP/smoke/agent.yaml" --split dev --limit 10
       - name: Results table to job summary
         run: |
           echo "### Smoke eval (synthetic fixtures, dev split)" >> "$GITHUB_STEP_SUMMARY"
           uv run triagelab results --split dev -c "$RUNNER_TEMP/smoke/majority.yaml" \
             --out-dir "$RUNNER_TEMP/smoke/results" >> "$GITHUB_STEP_SUMMARY"
+      - name: Agent trace stats to job summary
+        run: |
+          for run in "$RUNNER_TEMP"/smoke/runs/*-smoke-agent-*/; do
+            uv run triagelab runs stats "$run" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Upload the agent's traces
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-smoke-traces
+          path: |
+            ${{ runner.temp }}/smoke/runs/*-smoke-agent-*/traces.jsonl
+            ${{ runner.temp }}/smoke/runs/*-smoke-agent-*/predictions.jsonl
+            ${{ runner.temp }}/smoke/runs/*-smoke-agent-*/mcp_server.log
+          retention-days: 7
 
   test:
     name: Tests (${{ matrix.os }})

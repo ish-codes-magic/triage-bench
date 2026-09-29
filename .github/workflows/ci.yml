@@ -29,6 +29,20 @@ jobs:
       - name: pre-commit (all files)
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
+  leakage:
+    # Its own job, so "no post-creation information reaches the agent" is a separately
+    # visible (and requirable) status check rather than one test among hundreds.
+    name: Leakage guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      - name: pytest -m leakage
+        run: uv run pytest -q -m leakage
+
   test:
     name: Tests (${{ matrix.os }})
     strategy:

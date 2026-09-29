@@ -37,7 +37,9 @@ class DiskCache:
         # that a later run would read as a valid cached response.
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            # newline="\n": the same bytes on every OS, so cassettes recorded on Windows
+            # match the files CI checks out.
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(value, f, ensure_ascii=False, indent=1)
             Path(tmp).replace(path)
         except BaseException:

@@ -68,4 +68,5 @@ filterwarnings = [
 ]
 markers = [
     "your_turn: a YOUR TURN exercise; xfails until the stub is implemented (run with -m your_turn --runxfail to see it fail)",
+    "leakage: guards that nothing from after an issue's creation reaches the agent (own CI check)",
 ]

@@ -3,6 +3,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+from triagelab.data.models import RawIssue
 from triagelab.data.profile import load_profile
 from triagelab.mcp_server.code_search import CodeSearcher
 from triagelab.mcp_server.codeowners import CodeOwners
@@ -23,10 +24,11 @@ TITLES = (
 )
 
 
-def make_intel(checkout: Path) -> RepoIntel:
+def fixture_issues() -> list[RawIssue]:
+    """Three issues a day apart; #1 and #3 describe the same zipfile crash."""
     base = raw()
     assert base.original_body is not None
-    issues = []
+    issues: list[RawIssue] = []
     for n, title in TITLES:
         created = base.created_at + timedelta(days=n - 1)
         issues.append(
@@ -42,7 +44,12 @@ def make_intel(checkout: Path) -> RepoIntel:
                 }
             )
         )
-    (checkout / "Lib").mkdir()
+    return issues
+
+
+def make_intel(checkout: Path) -> RepoIntel:
+    issues = fixture_issues()
+    (checkout / "Lib").mkdir(parents=True)
     (checkout / "Lib" / "zipfile.py").write_text(
         "def _EndRecData(fpin):\n    pass\n", encoding="utf-8"
     )

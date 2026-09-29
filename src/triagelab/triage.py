@@ -45,6 +45,11 @@ class TriageResult(BaseModel):
     latency_ms: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    # Agent system metrics (§12.2): model calls, tool calls, and why the loop stopped
+    # ("submitted", "budget:max_steps", ...). Empty for single-call systems.
+    steps: int = 0
+    tool_calls: int = 0
+    stop_reason: str = ""
     # Set when the system fell back (e.g. invalid model output); the fallback is still scored.
     error: str | None = None
 

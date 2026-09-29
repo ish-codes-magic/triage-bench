@@ -229,3 +229,6 @@ data/*
 !data/DATASET_CARD.md
 # Local LLM response cache (the .cache/ rule above covers it; listed here for clarity)
 .cache/
+
+# Local Phoenix trace viewer data (scripts/phoenix_check.sh)
+.phoenix/

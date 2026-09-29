@@ -13,6 +13,7 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 | [0007](#adr-0007-your-turn-exercises-xfail-only-on-notimplementederror) | YOUR TURN exercises xfail only on NotImplementedError | M0 |
 | [0008](#adr-0008-ci-pre-commit-in-ci-sha-pinned-actions-two-oses) | CI: pre-commit in CI, SHA-pinned actions, two OSes | M0 |
 | [0009](#adr-0009-run-registry-one-immutable-folder-per-run) | Run registry: one immutable folder per run | M0 |
+| [0010](#adr-0010-small-open-weight-models-via-openrouter-pinned-per-role) | Small open-weight models via OpenRouter, pinned per role | M0 |
 
 ---
 
@@ -189,3 +190,37 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - Runs sort by time and are self-describing.
 - `triagelab compare` (M2+) can diff any two runs.
 - A run made on uncommitted code is visibly marked.
+
+## ADR-0010: Small open-weight models via OpenRouter, pinned per role
+
+**Context.**
+- The owner wants **small models**, and has one API key: OpenRouter.
+- The leakage rule (§7) requires the data to start after the training cutoff of *every* model evaluated. DeepSeek and Qwen publish **no** training cutoffs.
+- OpenRouter load-balances each model across providers that serve it at different precisions (fp4/fp8/bf16) and with different parameter support. For example, only 2 of 6 providers for Qwen3.5-9B return logprobs.
+
+**Decision.**
+- **Access:** every model goes through OpenRouter, via LiteLLM's `openrouter/` prefix and `OPENROUTER_API_KEY`.
+- **Lineup** (prices in $ per 1M tokens, input/output, verified 2026-09-29):
+
+  | Role | Model @ route | $ in/out | Why |
+  |---|---|---|---|
+  | agent_model | `qwen/qwen3.5-9b` @ `deepinfra/bf16` | 0.10 / 0.15 | Small, open weights (Apache-2.0); tools + JSON schema at full precision |
+  | LLM decision backend (E6) | `qwen/qwen3.5-9b` @ `parasail/bf16` | 0.10 / 0.25 | Same model; this provider returns logprobs (no tools, and decisions don't need them) |
+  | judge_model | `openai/gpt-6-luna` @ `openai` | 0.10 / 0.50 | A different family from the agent (limits self-preference), with a **stated** cutoff |
+  | E5 comparison | *pending:* `qwen/qwen3.5-27b` @ `alibaba` | 0.195 / 1.56 | Qwen3.5-4B isn't on OpenRouter, so E5 compares 9B with a same-family 27B |
+
+- **Cutoff rule for undisclosed cutoffs:**
+  - A model can't have trained on data from after its release, so the public release (or OpenRouter listing) date serves as a conservative upper bound.
+  - This **excludes** all current DeepSeek models (V4.1-Flash 2026-09-10, V4-Pro 2026-08-13) and the Qwen 3.7/3.8 hosted models. Each would leave only weeks of data.
+  - Luna's stated cutoff (2026-05-18) is the binding constraint, so dev/test issues start on or after **2026-05-19**.
+- **Pinning:**
+  - Every route is sent with OpenRouter's `provider: {only: [...], quantizations: [...], allow_fallbacks: false, require_parameters: true}`.
+  - The route is part of the **cache key**, because a different provider or precision can answer differently.
+  - It is also part of the **price key**, because providers charge differently.
+
+**Consequences.**
+- "The model" is an exact, reproducible artifact per run (weights × precision × provider).
+- The trade-off: if a pinned provider is down, calls fail instead of silently degrading (the route uptimes shown were ~99%).
+- One key, tiny costs, and more room for full-dev ablations and k-run consistency studies.
+- Small models will likely trip the output-validation retries more often. That becomes a measured failure category, not a hidden one.
+- Alibaba doesn't disclose the precision for the 27B route.

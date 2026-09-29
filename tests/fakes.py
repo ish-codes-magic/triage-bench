@@ -15,10 +15,15 @@ class FakeBackend:
     """
 
     def __init__(
-        self, text: str = "hello", fail_first: int = 0, texts: list[str] | None = None
+        self,
+        text: str = "hello",
+        fail_first: int = 0,
+        texts: list[str] | None = None,
+        script: list[Completion] | None = None,
     ) -> None:
         self.text = text
         self.texts = texts  # if set, successive calls return these in turn (then repeat the last)
+        self.script = script  # like `texts`, but whole completions (e.g. with tool calls)
         self.fail_first = fail_first
         self.calls = 0
         self.requests: list[LLMRequest] = []
@@ -28,6 +33,8 @@ class FakeBackend:
         self.requests.append(request)
         if self.calls <= self.fail_first:
             raise RateLimitedError("429")
+        if self.script:
+            return self.script[min(self.calls - self.fail_first, len(self.script)) - 1]
         text = self.text
         if self.texts:
             text = self.texts[min(self.calls, len(self.texts)) - 1]

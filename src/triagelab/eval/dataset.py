@@ -1,5 +1,7 @@
 """Load a dataset split as evaluation examples: (creation-time snapshot, gold, weight)."""
 
+from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -79,3 +81,15 @@ def load_history(data_dir: Path, profile: RepoProfile) -> list[IssueSnapshot]:
 
 def created_before(history: list[IssueSnapshot], when: datetime) -> list[IssueSnapshot]:
     return [h for h in history if h.created_at < when]
+
+
+def family_vocabulary(train: Sequence[EvalExample], min_count: int) -> list[str]:
+    """topic-*/OS-* labels seen at least `min_count` times on human-triaged training issues."""
+    counts = Counter(
+        lab
+        for e in train
+        if e.gold.human_triaged
+        for lab, group in e.gold.label_groups.items()
+        if group == "family"
+    )
+    return sorted(lab for lab, c in counts.items() if c >= min_count)

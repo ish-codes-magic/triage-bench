@@ -14,8 +14,7 @@
 import json
 import threading
 import time
-from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import ExitStack
 from datetime import UTC, datetime
@@ -33,7 +32,7 @@ from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile, load_profile
 from triagelab.data.splits import Split
 from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_parquet
-from triagelab.eval.dataset import EvalExample, load_history, load_split
+from triagelab.eval.dataset import EvalExample, family_vocabulary, load_history, load_split
 from triagelab.eval.registry import create_run, git_info, write_cost
 from triagelab.eval.score import Scorecard, score
 from triagelab.llm_client import CallStats, CassetteMissError, LLMClient
@@ -94,18 +93,6 @@ class RunOutcome(BaseModel):
     stopped_reason: str | None
     scorecard: Scorecard | None
     spent_usd: float = 0.0  # money actually spent by this run (cache hits are free)
-
-
-def family_vocabulary(train: Sequence[EvalExample], min_count: int) -> list[str]:
-    """topic-*/OS-* labels seen at least `min_count` times on human-triaged training issues."""
-    counts = Counter(
-        lab
-        for e in train
-        if e.gold.human_triaged
-        for lab, group in e.gold.label_groups.items()
-        if group == "family"
-    )
-    return sorted(lab for lab, c in counts.items() if c >= min_count)
 
 
 def build_triager(

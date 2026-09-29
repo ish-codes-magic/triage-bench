@@ -10,11 +10,11 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from triagelab.baselines.text import issue_text
 from triagelab.config import LLMConfig
 from triagelab.data.models import IssueSnapshot
 from triagelab.data.profile import RepoProfile
 from triagelab.llm_client import LLMClient, LLMRequest, LLMResponse, Message
+from triagelab.prompting import issue_prompt
 from triagelab.triage import TriageResult
 
 
@@ -57,38 +57,12 @@ from the component list, and your top 3 components in order.
 Give every confidence as a probability between 0 and 1. Reply with JSON only."""
 
 
-def _vocabulary(profile: RepoProfile, family_labels: Sequence[str]) -> str:
-    # Iteration 1 (docs/ITERATIONS.md): v1 printed "- area: stdlib, ..." and the model wrote
-    # "area-stdlib" on 57% of issues. Labels are now listed as exact strings to copy.
-    tax = profile.taxonomy
-    components = "\n".join(
-        f"- {c.name}: files under {', '.join(c.prefixes)}" for c in profile.components
-    )
-    return (
-        "Allowed labels. Copy them exactly as written; area labels have no prefix "
-        '(write "stdlib", never "area-stdlib").\n'
-        f"Type labels (pick one): {', '.join(tax.type)}\n"
-        f"Area labels (any that apply): {', '.join(tax.area)}\n"
-        f"Topic and OS labels (any that apply): {', '.join(family_labels)}\n\n"
-        f"Components:\n{components}"
-    )
-
-
 def build_messages(
     issue: IssueSnapshot, profile: RepoProfile, family_labels: Sequence[str], max_chars: int
 ) -> tuple[Message, Message]:
-    body = issue_text(issue, max_chars)
-    user = (
-        f"{_vocabulary(profile, family_labels)}\n\n"
-        "<issue>\n"
-        f"Author association: {issue.author_association}\n"
-        f"Opened: {issue.created_at:%Y-%m-%d}\n\n"
-        f"{body}\n"
-        "</issue>"
-    )
     return (
         Message(role="system", content=SYSTEM_PROMPT.format(repo=profile.repo)),
-        Message(role="user", content=user),
+        Message(role="user", content=issue_prompt(issue, profile, family_labels, max_chars)),
     )
 
 

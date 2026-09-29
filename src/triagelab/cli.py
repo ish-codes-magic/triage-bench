@@ -5,6 +5,7 @@ function from the library. No business logic lives here, so everything the CLI d
 is also reachable (and testable) from Python.
 """
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -15,7 +16,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict
 
 from triagelab import __version__, wiring
-from triagelab.config import load_config
+from triagelab.config import RetryConfig, load_config
 from triagelab.cost import BudgetExceededError
 from triagelab.eval.registry import create_run, git_info, list_runs, write_cost
 from triagelab.ledger import SpendLedger
@@ -33,7 +34,9 @@ app = typer.Typer(
 config_app = typer.Typer(help="Inspect configuration.", no_args_is_help=True)
 runs_app = typer.Typer(help="Inspect the run registry.", no_args_is_help=True)
 llm_app = typer.Typer(help="Talk to models through the cached, budgeted client.")
+data_app = typer.Typer(help="Collect and prepare datasets.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
+app.add_typer(data_app, name="data")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
@@ -138,3 +141,26 @@ def llm_ping(
     )
     typer.echo(f"latency   {response.latency_ms} ms")
     typer.echo(f"spend     all-time ${spent_total:.6f} of ${cfg.budget.usd_total:.2f}")
+
+
+ProfileOpt = Annotated[
+    Path, typer.Option("--profile", "-p", help="Repo profile YAML (configs/repos/...).")
+]
+DataDirOpt = Annotated[Path, typer.Option("--data-dir", help="Root of the local dataset.")]
+
+
+@data_app.command("collect")
+def data_collect(profile: ProfileOpt, data_dir: DataDirOpt = Path("data")) -> None:
+    """Collect a repo's issue histories and fixing-PR files (resumable, rate-limit aware)."""
+    from triagelab.data.collect import collect_repo
+    from triagelab.data.github import GraphQLClient
+    from triagelab.data.profile import load_profile
+
+    load_dotenv()
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        typer.echo("GITHUB_TOKEN is not set (see .env.example).", err=True)
+        raise typer.Exit(code=2)
+    client = GraphQLClient(token, retry=RetryConfig(max_attempts=5, max_delay_s=60))
+    summary = collect_repo(client, load_profile(profile), data_dir, log=typer.echo)
+    typer.echo(summary.model_dump_json(indent=2))

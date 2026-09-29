@@ -83,7 +83,7 @@ def test_retry_after_hint_is_a_floor() -> None:
     assert waits == [7.0]
 
 
-# ---- YOUR TURN: backoff_delay ----------------------------------------------------------
+# ---- backoff_delay ---------------------------------------------------------------------
 
 
 class _MaxRng:
@@ -93,21 +93,22 @@ class _MaxRng:
         return b
 
 
-@pytest.mark.your_turn
 def test_backoff_ceiling_doubles_each_attempt() -> None:
     rng = _MaxRng()
     got = [backoff_delay(a, base_s=1.0, cap_s=100.0, rng=rng) for a in range(4)]
     assert got == [1.0, 2.0, 4.0, 8.0]
 
 
-@pytest.mark.your_turn
 def test_backoff_is_capped() -> None:
     assert backoff_delay(10, base_s=1.0, cap_s=30.0, rng=_MaxRng()) == 30.0
 
 
-@pytest.mark.your_turn
 def test_backoff_is_jittered_within_bounds() -> None:
     rng = random.Random(0)
     delays = [backoff_delay(3, base_s=1.0, cap_s=100.0, rng=rng) for _ in range(200)]
     assert all(0.0 <= d <= 8.0 for d in delays)
     assert len(set(delays)) > 100  # genuinely random, not a constant
+
+
+def test_backoff_huge_attempt_does_not_overflow() -> None:
+    assert backoff_delay(5000, base_s=1.0, cap_s=30.0, rng=_MaxRng()) == 30.0

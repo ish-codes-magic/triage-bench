@@ -137,9 +137,7 @@ def test_schema_is_part_of_the_cache_key() -> None:
     assert plain.cache_key() != typed.cache_key()
 
 
-@pytest.mark.your_turn
 def test_transient_errors_are_retried(tmp_path: Path) -> None:
-    # Needs backoff_delay (YOUR TURN in retry.py) to compute the wait between attempts.
     backend = FakeBackend(fail_first=2)
     client = _client(tmp_path, backend, cache=False)
     resp = client.complete(_request())

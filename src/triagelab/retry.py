@@ -18,20 +18,16 @@ class UniformSource(Protocol):
 def backoff_delay(attempt: int, *, base_s: float, cap_s: float, rng: UniformSource) -> float:
     """Seconds to wait before retry number `attempt` (0 for the first retry).
 
-    # YOUR TURN
-    Implement "full jitter" backoff:
-        ceiling = min(cap_s, base_s * 2 ** attempt)
-        delay   = a uniformly random value in [0, ceiling]
+    "Full jitter" backoff: the ceiling doubles each attempt up to `cap_s`, and the actual
+    wait is uniform in [0, ceiling].
 
     Why jitter at all? If 50 workers hit a rate limit at the same moment and all wait
     exactly 1s, 2s, 4s..., they retry in lockstep and trip the limit again together.
     Randomizing the whole interval spreads them out.
-
-    Hint: it's two lines. Use `rng.uniform`, not the `random` module, so tests can control
-    the randomness.
-    Tests: tests/test_retry.py::test_backoff_*
     """
-    raise NotImplementedError("YOUR TURN: implement backoff_delay (see docstring)")
+    # Clamp the exponent: 2.0 ** 1100 overflows a float, and past ~2**60 the cap wins anyway.
+    ceiling = min(cap_s, base_s * 2.0 ** min(attempt, 60))
+    return rng.uniform(0.0, ceiling)
 
 
 def call_with_retries[T](

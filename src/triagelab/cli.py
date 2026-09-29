@@ -37,10 +37,12 @@ llm_app = typer.Typer(help="Talk to models through the cached, budgeted client."
 data_app = typer.Typer(help="Collect and prepare datasets.", no_args_is_help=True)
 retrieval_app = typer.Typer(help="Build and evaluate the retrieval index.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=True)
+judge_app = typer.Typer(help="Sample and calibrate the T5 comment judge.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 app.add_typer(data_app, name="data")
 app.add_typer(retrieval_app, name="retrieval")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(judge_app, name="judge")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
@@ -438,3 +440,90 @@ def label(
         "--browser.gatherUsageStats", "false",  # Streamlit sends usage stats unless told not to
     ]  # fmt: skip
     raise typer.Exit(subprocess.run(command, env=env, check=False).returncode)
+
+
+@judge_app.command("sample")
+def judge_sample(
+    runs: Annotated[
+        list[str], typer.Argument(help="NAME=RUN_DIR pairs whose triage comments are rated.")
+    ],
+    data_dir: DataDirOpt = Path("data"),
+    seed: int = 0,
+) -> None:
+    """Freeze the set of comments to rate (one per dev issue, system chosen at random)."""
+    from triagelab.labeling.ratings import RatingStore, sample_items
+
+    pairs = dict(r.split("=", 1) for r in runs)
+    items = sample_items({name: Path(path) for name, path in pairs.items()}, seed=seed)
+    store = RatingStore(data_dir)
+    store.write_items(items)
+    typer.echo(f"{len(items)} comments to rate written to {store.items_file.as_posix()}")
+
+
+@judge_app.command("calibrate")
+def judge_calibrate(
+    split: Annotated[
+        str, typer.Option(help="judge-dev (iterate), judge-test (once)")
+    ] = "judge-dev",
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    bias: Annotated[bool, typer.Option(help="Also run the verbosity/order checks.")] = True,
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/judge"),
+) -> None:
+    """Judge the human-rated comments and report agreement (QWK, exact, adjacent)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.judge import (
+        Judge,
+        JudgeTestGuard,
+        agreement,
+        bias_shift,
+        items_in,
+        render_agreement,
+        save_scores,
+    )
+    from triagelab.labeling.gold import load_items
+    from triagelab.labeling.ratings import RatingStore, load_rubric
+
+    if split not in ("judge-dev", "judge-test"):
+        raise typer.BadParameter("split must be judge-dev or judge-test")
+    load_dotenv()
+    cfg = load_config(config)
+    rubric = load_rubric(rubric_path)
+    profile = load_profile(cfg.dataset.profile)
+    store = RatingStore(cfg.dataset.data_dir)
+    guard = JudgeTestGuard(cfg.dataset.data_dir / "gold" / "judge_test_log.jsonl")
+    if split == "judge-test":
+        guard.authorize(rubric.version)
+    ratings = store.ratings()
+    rated = [i for i in items_in(split, store.items()) if i.item_id in ratings]
+    if not rated:
+        typer.echo(f"No human ratings in {split} yet: rate comments in `triagelab label` first.")
+        raise typer.Exit(1)
+    issues = {i.snapshot.issue_ref: i for i in load_items(cfg.dataset.data_dir, profile)}
+    pairs = [(i, issues[i.issue_ref]) for i in rated]
+    run_dir, _ = create_run(
+        cfg, runs_dir=cfg.paths.runs_dir, command=f"judge calibrate --split {split}",
+        now=datetime.now(UTC), git=git_info(Path.cwd()), details={"split": split},
+    )  # fmt: skip
+    client = wiring.build_llm_client(cfg, run_id=run_dir.name)
+    judge = Judge(client, cfg.llm, rubric, profile.repo)
+    plain = judge.score_all(pairs, workers=cfg.eval.concurrency, log=typer.echo)
+    save_scores(run_dir / "judge_scores.jsonl", plain)
+    table = render_agreement(agreement(ratings, plain, rubric), split)
+    lines = [f"# Judge agreement: {split}", "", table]
+    if bias and split == "judge-dev":
+        for variant in ("padded", "reversed"):
+            other = judge.score_all(
+                pairs, variant=variant, workers=cfg.eval.concurrency, log=typer.echo
+            )
+            save_scores(run_dir / f"judge_scores_{variant}.jsonl", other)
+            shift = ", ".join(f"{k} {v:+.2f}" for k, v in bias_shift(plain, other).items())
+            lines += ["", f"- **{variant}** mean score shift: {shift}"]
+    write_cost(run_dir, client.stats)
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    typer.echo(f"cost ${client.stats.cost_usd:.4f}")
+    if split == "judge-test":
+        guard.record(rubric.version)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))

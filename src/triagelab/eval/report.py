@@ -75,9 +75,13 @@ def _cell(m: MetricScore | None) -> str:
 
 
 def results_table(runs: list[ScoredRun], split: str) -> str:
-    """Latest scored run per config name for `split`, one row each."""
+    """One row per config name for `split`: its most complete scored run, latest first.
+
+    Most complete wins so a quick `--limit` run (a smoke check, a trace demo) never
+    replaces a full evaluation in the table.
+    """
     latest: dict[str, ScoredRun] = {}
-    for run in sorted(runs, key=lambda r: r.created_at):
+    for run in sorted(runs, key=lambda r: (r.stats.issues, r.created_at)):
         if run.split == split:
             latest[run.name] = run
     rows = sorted(latest.values(), key=lambda r: r.name)

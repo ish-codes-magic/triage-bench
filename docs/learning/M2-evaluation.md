@@ -46,7 +46,10 @@ triagelab results --split dev ─► reports/results/dev.md
 - **The classifier is a strong floor:**
   - T1 micro-F1 0.71 [0.64, 0.77];
   - T3 accuracy 0.65 [0.52, 0.77], and top-3 0.94.
-  - A 9B LLM with generic instructions does *not* beat it on T1 or T3. That's the E1 answer, and the reason the agent needs skills and tools.
+- **The single-shot LLM (temperature 0) is significantly *worse* at labelling:**
+  - paired Δ T1 micro-F1 −0.124 [−0.185, −0.061];
+  - on T3 (+0.037 [−0.113, +0.196]) and T4 there is no evidence either way.
+  - That's the E1 answer, and the bar skills and tools must clear.
 - **Iteration 1** (`docs/ITERATIONS.md`): the prompt listed labels as `area: stdlib, …`, and the model wrote `area-stdlib` on 57% of issues.
   - The fix: exact strings.
   - The result: area F1 +0.475 [+0.349, +0.591].

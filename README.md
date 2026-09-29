@@ -8,7 +8,7 @@
 ![ruff](https://img.shields.io/badge/lint-ruff-informational)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Status: foundations and dataset complete (M0–M1 of 10).** The results table, cascade curve and findings land from M2 onward. Nothing below is a claimed model result yet, and negative results will be reported as prominently as positive ones.
+> **Status: M0–M2 of 10 complete** (foundations, dataset, baselines and scoring). Results so far are on the dev split with silver labels; the test set stays locked until M8. Negative results are reported as prominently as positive ones.
 
 ---
 
@@ -54,6 +54,27 @@ flowchart LR
   - every metric, including bootstrap CIs and calibration
 
   This is deliberate: the point is to understand what agent frameworks hide.
+
+## First results: do cheap baselines already solve it? (E1)
+
+**Dev split (n = 100), silver labels, 95% bootstrap intervals.** This is not the headline test-set table yet: the test set stays locked until M8.
+
+| system | T1 labels micro-F1 | T1 area F1 | T3 component acc. | T3 top-3 | T4 needs-info F1 | $/issue |
+|---|---|---|---|---|---|---|
+| majority class | 0.40 [0.32, 0.49] | 0.37 [0.26, 0.49] | 0.26 [0.15, 0.38] | 0.76 | 0.00 | $0 |
+| **TF-IDF + logistic regression** | **0.71 [0.64, 0.77]** | **0.65 [0.56, 0.74]** | 0.65 [0.52, 0.77] | **0.94** | 0.09 [0.00, 0.26] | $0 |
+| Qwen3.5-9B, single call, no tools | 0.59 [0.54, 0.64] | 0.57 [0.48, 0.67] | 0.69 [0.56, 0.80] | 0.89 | 0.20 [0.05, 0.36] | $0.00015 |
+
+- **Negative result first.** A 9B model with generic instructions is **significantly worse than TF-IDF at labelling**: paired difference −0.12 [−0.19, −0.06] in T1 micro-F1.
+  - On components and needs-info there's no evidence either way at this sample size.
+  - That's the bar the agent, with skills and retrieval tools (M3–M4), has to clear.
+- **Duplicates need retrieval.** Lexical nearest-neighbour search finds almost none (link-F1 0.11 [0.00, 0.32]), and a model without tools can't find them at all.
+- **The first measured iteration was a prompt-formatting fix.**
+  - The prompt listed labels as `area: stdlib, …`, and the model answered `area-stdlib` on 57% of issues.
+  - Listing exact strings raised area F1 by **+0.475 [+0.349, +0.591]**.
+  - This was caught because invented labels are recorded, not silently dropped. → [iteration log](docs/ITERATIONS.md)
+
+Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from the run registry with `triagelab results --split dev`).
 
 ## The dataset: CPython issues, exactly as they were opened
 
@@ -104,7 +125,7 @@ flowchart LR
 
 - [x] **M0 Foundations:** config, cached and budgeted model client, run registry, CLI, hardened CI
 - [x] **M1 Data:** collection, creation-time snapshots, ground-truth derivation, time splits, leakage tests
-- [ ] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
+- [x] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
 - [ ] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
 - [ ] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
 - [ ] **M5 Gold labels, judge, failure taxonomy**
@@ -128,6 +149,11 @@ uv run triagelab runs list       # run registry and all-time spend vs. budget
 # Dataset (needs GITHUB_TOKEN in .env; ~15 min, ~400 GraphQL points)
 uv run triagelab data collect -p configs/repos/python__cpython.yaml
 uv run triagelab data build   -p configs/repos/python__cpython.yaml
+
+# Evaluate (dev split; the test split needs --allow-test and is capped at two runs)
+uv run triagelab eval -c configs/experiments/e1-classifier.yaml --split dev
+uv run triagelab compare runs/<run_a> runs/<run_b>   # paired-bootstrap deltas
+uv run triagelab results --split dev                 # reports/results/dev.md
 ```
 
 Development:

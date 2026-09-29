@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3016,
+  "tokens_out": 467,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 271
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-885126b2d125fb57",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"type-crash\", \"confidence\": 0.95}, {\"label\": \"interpreter-core\", \"confidence\": 0.95}], \"component\": \"interpreter-core\", \"component_confidence\": 0.9, \"needs_info\": true, \"needs_info_confidence\": 0.95, \"duplicate_of\": 10, \"duplicate_confidence\": 0.95, \"duplicate_candidates\": [10], \"triage_comment\": \"This appears to be a duplicate of issue #10 which has the exact same description. The reporter should provide a minimal reproduction case with actual code and steps to reproduce the segfault.\"}"
+  }
+ ],
+ "reasoning_text": "The issue I'm looking at is \"segfault problem 130\" with the body \"segfault refcount dealloc bytecode eval loop observed in scenario 4.\"\n\nI found issue #10 which has the exact same body text: \"segfault refcount dealloc bytecode eval loop observed in scenario 4.\"\n\nThis appears to be a duplicate. The issue title format is \"segfault problem {number}\" and the body is identical. This looks like a pattern where someone is creating multiple issues with the same description but different numbers.\n\nLet me check if there are any other issues with the same body to understand the pattern better. But based on what I see, issue #10 is the exact duplicate of this issue #130.\n\nLet me submit the triage decision:\n- Type: type-crash (it's a segfault)\n- Area: interpreter-core (segfault in bytecode eval loop)\n- Component: interpreter-core (files under Objects/, Python/, Grammar/, Parser/, Include/)\n- Duplicate of: 10 (with high confidence since the body is identical)\n- Needs info: True (the reporter hasn't provided any actual reproduction steps, just a vague description)\n\n",
+ "cost_usd": 0.00037165,
+ "original_cost_usd": 0.00037165,
+ "cache_hit": false,
+ "latency_ms": 76946,
+ "attempts": 1
+}

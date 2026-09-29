@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2999,
+  "tokens_out": 534,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 311
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-9cd9f3e557e36f8e",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"extension-modules\", \"confidence\": 0.95}, {\"label\": \"type-bug\", \"confidence\": 0.8}], \"component\": \"extension-modules\", \"component_confidence\": 0.95, \"needs_info\": true, \"needs_info_confidence\": 0.99, \"duplicate_of\": 23, \"duplicate_confidence\": 0.85, \"duplicate_candidates\": [3], \"triage_comment\": \"Issue lacks details about the actual problem. Please provide a minimal reproducible example, expected vs actual behavior, and any error messages. This appears to be a duplicate of issue #23 (same scenario 2 description).\"}"
+  }
+ ],
+ "reasoning_text": "The issue text is extremely vague - it just says \"_sqlite3 C module cursor sqlite binding observed in scenario 2.\" without any actual details about what the problem is, what code is involved, what error occurs, etc.\n\nLooking at the similar issues, I see there are many issues with similar titles (3, 7, 11, 19, 23, 27, 31, 35) that all have the same vague description but different \"scenario\" numbers. These all appear to be placeholder or template issues that were created without real content.\n\nThe current issue (number 123 based on the title \"_sqlite3 problem 123\") has the same vague description as issue 23 (which mentions \"scenario 2\").\n\nGiven:\n1. The issue has no actual content - just a vague title and description\n2. It's essentially a duplicate of issue 23 (same scenario 2 description)\n3. The reporter hasn't provided any useful information about what the actual problem is\n\nI should:\n- Mark it as a duplicate of issue 23 (or possibly 3, but 23 is more recent and has the same scenario)\n- Mark that it needs more information\n- The component would be \"extension-modules\" since it's about the _sqlite3 C module\n- Type would be \"type-bug\" based on the pattern of similar issues\n\nLet me submit the triage decision.\n",
+ "cost_usd": 0.00038,
+ "original_cost_usd": 0.00038,
+ "cache_hit": false,
+ "latency_ms": 78732,
+ "attempts": 1
+}

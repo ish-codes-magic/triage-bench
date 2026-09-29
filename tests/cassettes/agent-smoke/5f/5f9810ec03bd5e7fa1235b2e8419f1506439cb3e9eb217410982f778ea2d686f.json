@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2796,
+  "tokens_out": 129,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 106
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-938cced01a687a4b",
+   "name": "get_issue",
+   "arguments": "{\"number\": 4}"
+  }
+ ],
+ "reasoning_text": "The search results show several issues with very similar titles and snippets. The issue I'm looking at is \"documentation problem 124\" with the snippet \"documentation typo howto sphinx wording observed in scenario 3.\"\n\nI see issues 4, 24, and 44 also have \"scenario 3\" in their snippets. Let me check the full text of one of these to understand the pattern better.\n\nLet me get issue #4 first to see what it's about.\n\n",
+ "cost_usd": 0.00029895000000000003,
+ "original_cost_usd": 0.00029895000000000003,
+ "cache_hit": false,
+ "latency_ms": 20078,
+ "attempts": 1
+}

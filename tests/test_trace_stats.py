@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from triagelab.eval.failure_tagger import TaggedFailure, write_failures
 from triagelab.harness.trace_stats import agent_stats, render
 from triagelab.triage import TriageResult
 
@@ -60,3 +61,23 @@ def test_stats_count_only_final_attempts(tmp_path: Path) -> None:
     assert stats.cost_per_issue == pytest.approx(0.004)
     assert stats.reasoning_tokens_mean == pytest.approx(20)
     assert "Skill load rate:** 50%" in render(stats, "run")
+
+
+def test_tagged_runs_report_failure_category_counts(tmp_path: Path) -> None:
+    write_run(tmp_path)
+    assert agent_stats(tmp_path).failure_categories is None
+    tagged = [
+        TaggedFailure(
+            issue_ref=f"o/r#{n}",
+            tasks=["T1"],
+            details={"T1": "x"},
+            categories=["retrieval miss"],
+            reasoning="r",
+            cost_usd=0.0,
+        )
+        for n in (1, 2)
+    ]
+    write_failures(tmp_path, tagged, taxonomy_version=0)
+    stats = agent_stats(tmp_path)
+    assert stats.failure_categories == {"retrieval miss": 2}
+    assert "| retrieval miss | 2 |" in render(stats, "run")

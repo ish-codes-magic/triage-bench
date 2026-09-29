@@ -410,3 +410,31 @@ def mcp_serve(
     serve(
         ["--profile", str(profile), "--data-dir", str(data_dir), *([] if dense else ["--no-dense"])]
     )
+
+
+@app.command()
+def label(
+    profile: ProfileOpt = Path("configs/repos/python__cpython.yaml"),
+    data_dir: DataDirOpt = Path("data"),
+    annotator: Annotated[str, typer.Option(help="Recorded with every label.")] = "owner",
+    port: Annotated[int, typer.Option(help="Local port for the app.")] = 8501,
+) -> None:
+    """Open the labeling app in the browser (gold labels, blind first; see M5)."""
+    import subprocess
+    import sys
+
+    from triagelab import labeling
+
+    app_path = Path(labeling.__file__).parent / "app.py"
+    env = {
+        **os.environ,
+        "TRIAGELAB_PROFILE": str(profile.resolve()),
+        "TRIAGELAB_DATA_DIR": str(data_dir.resolve()),
+        "TRIAGELAB_ANNOTATOR": annotator,
+    }
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(app_path),
+        "--server.port", str(port),
+        "--browser.gatherUsageStats", "false",  # Streamlit sends usage stats unless told not to
+    ]  # fmt: skip
+    raise typer.Exit(subprocess.run(command, env=env, check=False).returncode)

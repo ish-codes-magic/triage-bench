@@ -1,0 +1,256 @@
+"""Run a triage system over a dataset split and score it (AGENTS.md §12.1).
+
+`triagelab eval --config configs/experiments/<x>.yaml --split dev`
+
+- Parallel: issues are triaged on a thread pool (model calls are I/O-bound).
+- Resumable: predictions are appended to predictions.jsonl as they complete; `--resume`
+  continues a run, skipping issues already predicted.
+- Budget-guarded: a BudgetExceededError stops new work, keeps what finished, and leaves
+  the run unscored.
+- Test-set hygiene: the test split needs an explicit flag and may be evaluated at most
+  twice over the project's lifetime; every test run is logged (AGENTS.md §7.4).
+"""
+
+import json
+import threading
+import time
+from collections import Counter
+from collections.abc import Callable, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import UTC, datetime
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from triagelab import wiring
+from triagelab.baselines.classifier import ClassifierTriager
+from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
+from triagelab.baselines.majority import MajorityTriager
+from triagelab.config import Config
+from triagelab.cost import BudgetExceededError
+from triagelab.data.build import dataset_paths
+from triagelab.data.profile import RepoProfile, load_profile
+from triagelab.data.splits import Split
+from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_parquet
+from triagelab.eval.dataset import EvalExample, load_history, load_split
+from triagelab.eval.registry import create_run, git_info, write_cost
+from triagelab.eval.score import Scorecard, score
+from triagelab.llm_client import CallStats, LLMClient
+from triagelab.triage import Triager, TriageResult
+
+TEST_EVALUATION_LIMIT = 2
+Log = Callable[[str], None]
+
+
+class TestSetLockedError(RuntimeError):
+    """The test split was requested without permission, or its evaluation budget is spent."""
+
+    __test__ = False  # not a pytest test class, despite the name
+
+
+class TestSetGuard:
+    """Policy as code: test-set evaluations need a flag and are capped and logged."""
+
+    __test__ = False  # not a pytest test class, despite the name
+
+    def __init__(self, runs_dir: Path) -> None:
+        self._log = runs_dir / "test_evaluations.jsonl"
+
+    def evaluations(self) -> list[dict[str, str]]:
+        if not self._log.exists():
+            return []
+        return [
+            json.loads(line) for line in self._log.read_text(encoding="utf-8").splitlines() if line
+        ]
+
+    def authorize(self, allow: bool) -> None:
+        if not allow:
+            raise TestSetLockedError(
+                "The test split is locked. Iterate on dev; pass --allow-test only for the "
+                "final evaluation (at most twice in the project, AGENTS.md §7.4)."
+            )
+        used = len(self.evaluations())
+        if used >= TEST_EVALUATION_LIMIT:
+            raise TestSetLockedError(f"Test set already evaluated {used} times (limit 2).")
+
+    def record(self, run_id: str, config_name: str) -> None:
+        self._log.parent.mkdir(parents=True, exist_ok=True)
+        with self._log.open("a", encoding="utf-8", newline="\n") as f:
+            f.write(
+                json.dumps(
+                    {"run_id": run_id, "config": config_name, "at": datetime.now(UTC).isoformat()}
+                )
+                + "\n"
+            )
+
+
+class RunOutcome(BaseModel):
+    run_id: str
+    run_dir: Path
+    completed: int
+    total: int
+    stopped_reason: str | None
+    scorecard: Scorecard | None
+
+
+def family_vocabulary(train: Sequence[EvalExample], min_count: int) -> list[str]:
+    """topic-*/OS-* labels seen at least `min_count` times on human-triaged training issues."""
+    counts = Counter(
+        lab
+        for e in train
+        if e.gold.human_triaged
+        for lab, group in e.gold.label_groups.items()
+        if group == "family"
+    )
+    return sorted(lab for lab, c in counts.items() if c >= min_count)
+
+
+def build_triager(cfg: Config, profile: RepoProfile, client: Callable[[], LLMClient]) -> Triager:
+    if cfg.system is None:
+        raise ValueError(f"Config {cfg.name!r} has no `system:` section; use an experiment config.")
+    data_dir = cfg.dataset.data_dir
+    train = load_split(data_dir, profile, "train")
+    kind = cfg.system.kind
+    if kind == "majority":
+        return MajorityTriager(train)
+    if kind == "classifier":
+        return ClassifierTriager(
+            train, load_history(data_dir, profile), min_label_count=cfg.system.min_label_count
+        )
+    return LLMSingleShotTriager(
+        client(),
+        cfg.llm,
+        profile,
+        family_vocabulary(train, cfg.system.min_label_count),
+        max_body_chars=cfg.system.max_body_chars,
+    )
+
+
+def _dataset_hash(cfg: Config, profile: RepoProfile) -> str:
+    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
+    if not report.exists():
+        return "unknown"
+    return str(json.loads(report.read_text(encoding="utf-8")).get("dataset_hash", "unknown"))
+
+
+def _timed(triager: Triager, example: EvalExample, run_id: str) -> TriageResult:
+    started = time.perf_counter()
+    try:
+        result = triager.triage(example.snapshot)
+    except BudgetExceededError:
+        raise
+    except Exception as err:  # one bad issue must not sink the run; the failure is scored
+        result = TriageResult(
+            issue_ref=example.snapshot.issue_ref, error=f"{type(err).__name__}: {err}"
+        )
+    elapsed = round((time.perf_counter() - started) * 1000)
+    return result.model_copy(update={"run_id": run_id, "latency_ms": result.latency_ms or elapsed})
+
+
+def run_eval(
+    cfg: Config,
+    *,
+    split: Split,
+    runs_dir: Path,
+    command: str,
+    log: Log,
+    limit: int | None = None,
+    allow_test: bool = False,
+    resume_dir: Path | None = None,
+) -> RunOutcome:
+    test_guard = TestSetGuard(runs_dir)
+    if split == "test":
+        test_guard.authorize(allow_test)
+
+    profile = load_profile(cfg.dataset.profile)
+    examples = load_split(cfg.dataset.data_dir, profile, split)[:limit]
+    if resume_dir is not None:
+        run_dir, run_id = resume_dir, resume_dir.name
+    else:
+        assert cfg.system is not None
+        run_dir, manifest = create_run(
+            cfg,
+            runs_dir=runs_dir,
+            command=command,
+            now=datetime.now(UTC),
+            git=git_info(Path.cwd()),
+            details={
+                "split": split,
+                "system": cfg.system.kind,
+                "model": cfg.llm.model if cfg.system.kind == "llm_single_shot" else "-",
+                "dataset_hash": _dataset_hash(cfg, profile),
+                "issues": str(len(examples)),
+            },
+        )
+        run_id = manifest.run_id
+
+    clients: list[LLMClient] = []
+
+    def client() -> LLMClient:
+        clients.append(wiring.build_llm_client(cfg, run_id=run_id))
+        return clients[-1]
+
+    kind = cfg.system.kind if cfg.system else "?"
+    log(f"run {run_id}: building {kind} on {split} ({len(examples)} issues)")
+    triager = build_triager(cfg, profile, client)
+
+    predictions_path = run_dir / "predictions.jsonl"
+    done = {p.issue_ref: p for p in read_jsonl(predictions_path, TriageResult)}
+    todo = [e for e in examples if e.snapshot.issue_ref not in done]
+    stopped: str | None = None
+    write_lock = threading.Lock()
+
+    with ThreadPoolExecutor(max_workers=cfg.eval.concurrency) as pool:
+        pending: set[Future[TriageResult]] = {pool.submit(_timed, triager, e, run_id) for e in todo}
+        finished = 0
+        while pending:
+            complete, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in complete:
+                try:
+                    result = future.result()
+                except BudgetExceededError as err:
+                    stopped = f"budget: {err}"
+                    for f in pending:
+                        f.cancel()
+                    continue
+                with write_lock:
+                    append_jsonl(predictions_path, [result])
+                    done[result.issue_ref] = result
+                finished += 1
+                if finished % 10 == 0 or finished == len(todo):
+                    log(f"  {finished}/{len(todo)} issues")
+            if stopped:
+                break
+
+    stats = clients[0].stats if clients else CallStats()
+    write_cost(run_dir, stats)
+    card: Scorecard | None = None
+    if stopped is None and len(done) >= len(examples):
+        predictions = [done[e.snapshot.issue_ref] for e in examples]
+        card = score(
+            examples, predictions, resamples=cfg.eval.bootstrap_resamples, seed=cfg.eval.seed
+        )
+        write_json(
+            run_dir / "metrics.json",
+            {"split": split, "config": cfg.name, **card.model_dump(mode="json")},
+        )
+        write_parquet(
+            run_dir / "predictions.parquet",
+            [
+                {
+                    **p.model_dump(mode="json", exclude={"label_confidence"}),
+                    "label_confidence": json.dumps(p.label_confidence, sort_keys=True),
+                }
+                for p in predictions
+            ],
+        )
+        if split == "test":
+            test_guard.record(run_id, cfg.name)
+    return RunOutcome(
+        run_id=run_id,
+        run_dir=run_dir,
+        completed=len(done),
+        total=len(examples),
+        stopped_reason=stopped,
+        scorecard=card,
+    )

@@ -1,0 +1,202 @@
+{
+  "repo": "python/cpython",
+  "built_at": "2026-09-29T08:16:34.287094Z",
+  "dataset_hash": "23ee2ef6f25bf3cdff548bd07b864b0857ba6344a84b0f8507f943ebecd68ac9",
+  "issues": 5476,
+  "split_sizes": {
+    "train": 4152,
+    "dev_reserve": 752,
+    "dev": 100,
+    "test_reserve": 422,
+    "test": 50
+  },
+  "exclusions": {},
+  "body_edited": 5185,
+  "renamed": 987,
+  "comments_truncated": 8,
+  "timeline_truncated": 5,
+  "rates": {
+    "pool_n": 1324,
+    "pool_rate": {
+      "duplicate": 0.0256797583081571,
+      "needs_info": 0.08610271903323263,
+      "component": 0.459214501510574
+    },
+    "sample_rate": {
+      "dev": {
+        "duplicate": 0.13,
+        "needs_info": 0.15,
+        "component": 0.54
+      },
+      "test": {
+        "duplicate": 0.12,
+        "needs_info": 0.22,
+        "component": 0.46
+      }
+    },
+    "weighted_rate": {
+      "dev": {
+        "duplicate": 0.03051643192488263,
+        "needs_info": 0.09154929577464789,
+        "component": 0.460093896713615
+      },
+      "test": {
+        "duplicate": 0.01694915254237288,
+        "needs_info": 0.07627118644067797,
+        "component": 0.4576271186440678
+      }
+    }
+  },
+  "label_sources": {
+    "triager": 1603,
+    "author": 1456
+  },
+  "human_triaged_rate": {
+    "train": 0.7177263969171483,
+    "dev": 0.71,
+    "test": 0.6
+  },
+  "top_labels": {
+    "type": [
+      [
+        "type-bug",
+        684
+      ],
+      [
+        "type-feature",
+        289
+      ],
+      [
+        "type-crash",
+        108
+      ],
+      [
+        "type-refactor",
+        32
+      ],
+      [
+        "type-security",
+        16
+      ]
+    ],
+    "area": [
+      [
+        "stdlib",
+        371
+      ],
+      [
+        "extension-modules",
+        255
+      ],
+      [
+        "interpreter-core",
+        249
+      ],
+      [
+        "tests",
+        151
+      ],
+      [
+        "docs",
+        117
+      ],
+      [
+        "performance",
+        76
+      ],
+      [
+        "build",
+        33
+      ],
+      [
+        "infra",
+        13
+      ]
+    ],
+    "family": [
+      [
+        "topic-free-threading",
+        94
+      ],
+      [
+        "topic-asyncio",
+        48
+      ],
+      [
+        "OS-windows",
+        43
+      ],
+      [
+        "topic-profiling",
+        41
+      ],
+      [
+        "OS-unsupported",
+        31
+      ],
+      [
+        "topic-tkinter",
+        31
+      ],
+      [
+        "topic-C-API",
+        28
+      ],
+      [
+        "topic-lazy-imports",
+        25
+      ],
+      [
+        "topic-parser",
+        23
+      ],
+      [
+        "OS-mac",
+        19
+      ],
+      [
+        "topic-multiprocessing",
+        19
+      ],
+      [
+        "topic-email",
+        17
+      ]
+    ]
+  },
+  "duplicate_sources": {
+    "state_reason": 207,
+    "comment": 3
+  },
+  "components": {
+    "dev": {
+      "(none)": 46,
+      "stdlib": 17,
+      "interpreter-core": 14,
+      "extension-modules": 10,
+      "tests": 6,
+      "build": 4,
+      "docs": 3
+    },
+    "test": {
+      "(none)": 27,
+      "extension-modules": 6,
+      "stdlib": 5,
+      "tests": 4,
+      "build": 3,
+      "docs": 3,
+      "interpreter-core": 2
+    },
+    "train": {
+      "(none)": 2361,
+      "interpreter-core": 489,
+      "stdlib": 484,
+      "extension-modules": 293,
+      "docs": 269,
+      "tests": 133,
+      "build": 90,
+      "infra": 33
+    }
+  },
+  "component_skipped_ties": 80
+}

@@ -5,7 +5,10 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from triagelab.config import load_config
 from triagelab.data.profile import load_profile
+from triagelab.eval.runner import run_eval
+from triagelab.labeling.failure_tags import FailureTagStore
 from triagelab.labeling.gold import GoldStore, LabelingItem, gold_path, load_items
 from triagelab.labeling.ratings import RatingStore, sample_items
 from triagelab.triage import TriageResult
@@ -105,3 +108,31 @@ def test_rating_page_scores_every_criterion_blind_to_the_system(
     rating = store.ratings()[first.item_id]
     assert rating.scores == {"correctness": 3, "actionability": 3, "tone": 3}
     assert rating.rubric_version == 1
+
+
+def test_review_page_tags_a_failure_of_a_replayed_agent_run(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = load_config(tmp_path / "agent.yaml")  # the smoke agent, replayed from cassettes
+    outcome = run_eval(
+        cfg, split="dev", runs_dir=cfg.paths.runs_dir, command="t", log=lambda _: None, limit=10
+    )
+    monkeypatch.setenv("TRIAGELAB_RUNS_DIR", str(cfg.paths.runs_dir))
+    page = tmp_path / "review_page.py"
+    page.write_text(
+        "from triagelab.labeling import review_page\nreview_page.render()\n", encoding="utf-8"
+    )
+    at = AppTest.from_file(str(page), default_timeout=60).run()
+    assert not at.exception
+    assert any("What went wrong" in m.value for m in at.markdown)
+    assert any("Agent trace" in m.value for m in at.markdown)
+
+    at = button(at, "Save and next")
+    assert any("at least one code" in e.value for e in at.error)
+    at.multiselect[0].set_value(["retrieval miss"])
+    at = button(at, "Save and next")
+    tags = FailureTagStore(data_dir).load()
+    assert len(tags) == 1
+    ((run_id, _), tag), *_ = tags.items()
+    assert run_id == outcome.run_dir.name
+    assert tag.codes == ["retrieval miss"]

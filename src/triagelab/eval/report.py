@@ -123,7 +123,7 @@ class DeltaRow(BaseModel):
     significant: bool
 
 
-def _load_run(run_dir: Path) -> tuple[Config, Split, list[TriageResult]]:
+def load_run(run_dir: Path) -> tuple[Config, Split, list[TriageResult]]:
     cfg = Config.model_validate(
         yaml.safe_load((run_dir / "config.yaml").read_text(encoding="utf-8"))
     )
@@ -158,8 +158,8 @@ def compare_runs(
     `exclude_errors` drops issues where either run fell back (e.g. a provider outage), to
     isolate the effect of a change from infrastructure noise.
     """
-    cfg_a, split_a, preds_a = _load_run(run_a)
-    _, split_b, preds_b = _load_run(run_b)
+    cfg_a, split_a, preds_a = load_run(run_a)
+    _, split_b, preds_b = load_run(run_b)
     if split_a != split_b:
         raise ValueError(f"Runs are on different splits ({split_a} vs {split_b}).")
     examples = examples_for(cfg_a, split_a, labels)
@@ -211,7 +211,7 @@ def rescore_on_gold(
     for run in runs:
         if run.split != split:
             continue
-        run_cfg, _, preds = _load_run(runs_dir / run.run_id)
+        run_cfg, _, preds = load_run(runs_dir / run.run_id)
         latest = {p.issue_ref: p for p in preds}
         examples = [
             e for e in examples_for(run_cfg, split, "gold") if e.snapshot.issue_ref in latest

@@ -97,7 +97,38 @@ class PathsConfig(_Strict):
     ledger_file: PortablePath = Path("runs/spend_ledger.jsonl")
 
 
-SystemKind = Literal["majority", "classifier", "llm_single_shot"]
+SystemKind = Literal["majority", "classifier", "llm_single_shot", "agent"]
+
+
+class AgentBudgetConfig(_Strict):
+    """Per-issue limits (AGENTS.md §10). Near a limit the agent is made to submit."""
+
+    max_steps: int = Field(default=12, ge=2, description="Model calls per issue.")
+    max_tool_calls: int = Field(default=15, ge=0)
+    max_tokens: int = Field(default=200_000, gt=0, description="Prompt + output, summed.")
+    max_cost_usd: float = Field(default=0.03, gt=0)
+
+
+class McpConfig(_Strict):
+    # stdio: repo-intel as a real subprocess (evaluation). in_process: same process,
+    # in-memory transport (tests); both speak the same MCP protocol.
+    transport: Literal["stdio", "in_process"] = "stdio"
+    dense: bool = True
+
+
+class AgentConfig(_Strict):
+    """The agent harness. Every ablation in E2-E5 is a change to this block."""
+
+    skills: list[str] = Field(default_factory=list[str], description="Skill folder names.")
+    skills_dir: PortablePath = Path("skills")
+    # MCP tools to expose; None = every tool the server lists.
+    tools: list[str] | None = None
+    budget: AgentBudgetConfig = AgentBudgetConfig()
+    max_tool_result_chars: int = Field(default=6_000, gt=0)
+    # Approximate prompt size at which older tool results are elided (compaction).
+    context_limit_tokens: int = Field(default=24_000, gt=0)
+    max_validation_retries: int = Field(default=2, ge=0)
+    mcp: McpConfig = McpConfig()
 
 
 class SystemConfig(_Strict):
@@ -108,6 +139,20 @@ class SystemConfig(_Strict):
     # Labels need this many human-triaged training examples to be learned (classifier)
     # or offered in the vocabulary (LLM): rarer ones can't be evaluated meaningfully.
     min_label_count: int = Field(default=10, ge=1)
+    agent: AgentConfig | None = None  # required when kind is "agent"
+
+    @model_validator(mode="after")
+    def _agent_needs_its_block(self) -> Self:
+        if (self.kind == "agent") != (self.agent is not None):
+            raise ValueError("system.agent is required for kind 'agent' and only allowed there")
+        return self
+
+
+class TracingConfig(_Strict):
+    """Local JSONL traces are always written; OTLP export (e.g. to Phoenix) is optional."""
+
+    otlp_endpoint: str | None = None  # e.g. http://localhost:6006/v1/traces
+    project: str = "triagelab"
 
 
 class DatasetConfig(_Strict):
@@ -132,6 +177,7 @@ class Config(_Strict):
     dataset: DatasetConfig = DatasetConfig()
     eval: EvalConfig = EvalConfig()
     system: SystemConfig | None = None  # set by experiment configs
+    tracing: TracingConfig = TracingConfig()
 
     def fingerprint(self) -> str:
         """Short stable hash of the resolved config, recorded with every run."""

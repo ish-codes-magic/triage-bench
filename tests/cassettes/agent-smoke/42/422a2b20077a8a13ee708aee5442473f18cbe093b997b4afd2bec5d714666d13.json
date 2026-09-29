@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3006,
+  "tokens_out": 76,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 56
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-afe8342598c72cb3",
+   "name": "get_issue",
+   "arguments": "{\"number\": 25}"
+  }
+ ],
+ "reasoning_text": "Let me check a few more of these issues to understand the pattern better. They all seem to have the same title format and similar snippets. Let me check issue 25 which also mentions \"scenario 4\" like the current issue.\n\n",
+ "cost_usd": 0.000312,
+ "original_cost_usd": 0.000312,
+ "cache_hit": false,
+ "latency_ms": 8762,
+ "attempts": 1
+}

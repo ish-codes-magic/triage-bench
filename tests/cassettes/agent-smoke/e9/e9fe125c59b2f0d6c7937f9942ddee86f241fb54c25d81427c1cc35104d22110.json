@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3180,
+  "tokens_out": 489,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 221
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-b704e01f77fc0a23",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"stdlib\", \"confidence\": 0.95}, {\"label\": \"type-bug\", \"confidence\": 0.95}], \"component\": \"stdlib\", \"component_top3\": [\"stdlib\", \"interpreter-core\", \"tests\"], \"component_confidence\": 0.9, \"duplicate_of\": 9, \"duplicate_confidence\": 0.95, \"duplicate_candidates\": [5, 13, 17, 21, 25, 33, 37, 41, 45], \"needs_info\": false, \"needs_info_confidence\": 0.9, \"triage_comment\": \"This issue appears to be a duplicate of issue #9, which has the exact same body text describing the same asyncio pathlib glob event loop task cancel scenario.\"}"
+  }
+ ],
+ "reasoning_text": "The issue I'm looking at is \"asyncio problem 129\" with the body \"asyncio pathlib glob event loop task cancel observed in scenario 3.\"\n\nI found issue #9 which has the exact same body text: \"asyncio pathlib glob event loop task cancel observed in scenario 3.\"\n\nThis appears to be a duplicate of issue #9. The issue title is different (\"asyncio problem 129\" vs \"asyncio problem 9\") but the body text is identical.\n\nLet me check a few more to understand the pattern better, but it seems like this is clearly a duplicate of issue #9.\n\nBased on my analysis:\n- This is a duplicate of issue #9 (same body text)\n- Type: type-bug (based on the pattern of similar issues)\n- Area: stdlib (asyncio is in stdlib)\n- Component: stdlib (asyncio is in Lib/asyncio/)\n- No additional info needed from the reporter (the issue is clearly a duplicate)\n\nLet me submit the triage decision.\n",
+ "cost_usd": 0.00039135,
+ "original_cost_usd": 0.00039135,
+ "cache_hit": false,
+ "latency_ms": 51507,
+ "attempts": 1
+}

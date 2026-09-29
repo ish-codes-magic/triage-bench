@@ -19,6 +19,9 @@ class TriageResult(BaseModel):
     # T1
     labels: list[str] = Field(default_factory=list[str])
     label_confidence: dict[str, float] = Field(default_factory=dict[str, float])
+    # Labels the system proposed that aren't in the taxonomy (dropped from `labels`, kept
+    # for the "hallucinated label" failure category).
+    rejected_labels: list[str] = Field(default_factory=list[str])
     # T3. `component_candidates` (ranked) extends §3 so top-3 accuracy is computable.
     component: str | None = None
     component_confidence: float | None = None

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from triagelab.config import (
     AgentConfig,
+    CacheConfig,
     Config,
     LLMConfig,
     ProviderRoute,
@@ -120,3 +121,8 @@ def test_agent_kind_and_agent_block_go_together() -> None:
         SystemConfig(kind="agent")
     with pytest.raises(ValidationError, match=r"system.agent"):
         SystemConfig(kind="classifier", agent=AgentConfig())
+
+
+def test_replay_only_requires_the_cache() -> None:
+    with pytest.raises(ValidationError, match="replay_only"):
+        CacheConfig(enabled=False, replay_only=True)

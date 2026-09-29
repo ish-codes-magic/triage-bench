@@ -36,7 +36,7 @@ from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_p
 from triagelab.eval.dataset import EvalExample, load_history, load_split
 from triagelab.eval.registry import create_run, git_info, write_cost
 from triagelab.eval.score import Scorecard, score
-from triagelab.llm_client import CallStats, LLMClient
+from triagelab.llm_client import CallStats, CassetteMissError, LLMClient
 from triagelab.triage import Triager, TriageResult
 
 TEST_EVALUATION_LIMIT = 2
@@ -161,8 +161,8 @@ def _timed(triager: Triager, example: EvalExample, run_id: str) -> TriageResult:
     started = time.perf_counter()
     try:
         result = triager.triage(example.snapshot)
-    except BudgetExceededError:
-        raise
+    except (BudgetExceededError, CassetteMissError):
+        raise  # stop the run: retrying can't help, and CI must fail loudly
     except Exception as err:  # one bad issue must not sink the run
         # Anything *raised* by a system is infrastructure (network, rate limit), not a model
         # answer. Marked so a resume or the retry pass can re-run it instead of scoring it.

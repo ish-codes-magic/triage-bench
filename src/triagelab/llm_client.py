@@ -154,6 +154,30 @@ class CompletionBackend(Protocol):
     def retry_after_s(self, err: Exception) -> float | None: ...
 
 
+class CassetteMissError(RuntimeError):
+    """Replay-only mode found no recorded response for a request.
+
+    Deliberately not retryable and not an "infrastructure" failure: in CI it means a
+    prompt, schema or tool output changed, and the cassettes must be re-recorded.
+    """
+
+
+class ReplayOnlyBackend:
+    """The backend for replay-only runs: every call that reaches it is a cache miss."""
+
+    def complete(self, request: LLMRequest, *, timeout_s: float) -> Completion:
+        raise CassetteMissError(
+            f"no recorded response for request {request.cache_key()[:16]} "
+            f"({request.model}, {len(request.messages)} messages); re-record the cassettes"
+        )
+
+    def is_retryable(self, err: Exception) -> bool:
+        return False
+
+    def retry_after_s(self, err: Exception) -> float | None:
+        return None
+
+
 def prompt_tokens_upper_bound(request: LLMRequest) -> int:
     """A prompt-size bound that can only over-count, used by the budget check.
 

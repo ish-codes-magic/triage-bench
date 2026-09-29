@@ -89,6 +89,15 @@ class RetryConfig(_Strict):
 class CacheConfig(_Strict):
     enabled: bool = True
     dir: PortablePath = Path(".cache/llm")
+    # CI cassettes: answer only from the cache and fail on a miss, so a replayed run can
+    # never spend money and any change to a prompt or tool output is caught.
+    replay_only: bool = False
+
+    @model_validator(mode="after")
+    def _replay_needs_the_cache(self) -> Self:
+        if self.replay_only and not self.enabled:
+            raise ValueError("cache.replay_only requires cache.enabled")
+        return self
 
 
 class PathsConfig(_Strict):

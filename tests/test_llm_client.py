@@ -16,10 +16,12 @@ from triagelab.cost import (
 )
 from triagelab.ledger import SpendLedger
 from triagelab.llm_client import (
+    CassetteMissError,
     Completion,
     LLMClient,
     LLMRequest,
     Message,
+    ReplayOnlyBackend,
     ToolCall,
     ToolSpec,
     prompt_tokens_upper_bound,
@@ -250,3 +252,21 @@ def test_tool_calls_and_reasoning_survive_the_cache(tmp_path: Path) -> None:
     assert replayed.cache_hit
     assert replayed.tool_calls == first.tool_calls == (CALL,)
     assert replayed.reasoning_text == "I should look it up."
+
+
+def test_replay_only_answers_from_the_cache_and_fails_loudly_on_a_miss(tmp_path: Path) -> None:
+    recorded = _client(tmp_path, FakeBackend(text="recorded")).complete(_request())
+    replay = LLMClient(
+        backend=ReplayOnlyBackend(),
+        prices=PRICES,
+        guard=BudgetGuard(per_run_usd=1.0, total_usd=1.0, spent_before_run_usd=0.0),
+        ledger=SpendLedger(tmp_path / "ledger.jsonl"),
+        cache=DiskCache(tmp_path / "cache"),
+        run_id="replay",
+        retry=RetryConfig(max_attempts=3),
+        timeout_s=5.0,
+    )
+    assert replay.complete(_request()).text == recorded.text
+    with pytest.raises(CassetteMissError, match="re-record"):
+        replay.complete(_request(sample=1))
+    assert replay.stats.retries == 0  # a miss is never retried

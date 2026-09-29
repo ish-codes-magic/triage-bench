@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from triagelab.config import Config, deep_merge, load_config
+from triagelab.config import Config, LLMConfig, ProviderRoute, deep_merge, load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASE = REPO_ROOT / "configs" / "base.yaml"
@@ -29,6 +29,16 @@ def test_paths_serialize_identically_on_every_os() -> None:
     dumped = load_config(BASE).model_dump(mode="json")
     assert dumped["paths"]["prices_file"] == "configs/prices.yaml"
     assert dumped["cache"]["dir"] == ".cache/llm"
+
+
+def test_route_tag_includes_quantization_when_pinned() -> None:
+    assert ProviderRoute(provider="deepinfra", quantization="bf16").tag == "deepinfra/bf16"
+    assert ProviderRoute(provider="alibaba").tag == "alibaba"
+
+
+def test_route_is_rejected_for_non_openrouter_models() -> None:
+    with pytest.raises(ValidationError, match="openrouter"):
+        LLMConfig(model="openai/gpt-6-luna", route=ProviderRoute(provider="openai"))
 
 
 def test_unknown_key_is_rejected(tmp_path: Path) -> None:

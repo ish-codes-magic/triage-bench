@@ -11,10 +11,10 @@ an ablation without anyone noticing.
 
 import copy
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Self, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
 from triagelab.hashing import stable_hash
 
@@ -33,6 +33,24 @@ class BudgetConfig(_Strict):
     usd_per_run: float = Field(gt=0, description="Hard cap on spend within a single run.")
 
 
+class ProviderRoute(_Strict):
+    """Pins an OpenRouter model to one hosting provider, and optionally one precision.
+
+    Left alone, OpenRouter load-balances each call across providers that may serve the
+    "same" model at different precisions (fp4/fp8/bf16) and with different parameter
+    support. In an evaluation that is a silent confound: the model could change from one
+    call to the next. See ADR-0010.
+    """
+
+    provider: str = Field(description="OpenRouter provider slug, e.g. 'deepinfra'.")
+    quantization: str | None = Field(default=None, description="e.g. 'bf16'; None = as served.")
+
+    @property
+    def tag(self) -> str:
+        """The endpoint tag OpenRouter uses, e.g. 'deepinfra/bf16'."""
+        return f"{self.provider}/{self.quantization}" if self.quantization else self.provider
+
+
 class LLMConfig(_Strict):
     """Model call settings.
 
@@ -42,11 +60,18 @@ class LLMConfig(_Strict):
     only for models that accept them.
     """
 
-    model: str = Field(description="LiteLLM model string, e.g. 'anthropic/<model-id>'.")
+    model: str = Field(description="LiteLLM model string, e.g. 'openrouter/qwen/qwen3.5-9b'.")
+    route: ProviderRoute | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     seed: int | None = None
     max_tokens: int = Field(default=1024, gt=0)
     timeout_s: float = Field(default=60.0, gt=0)
+
+    @model_validator(mode="after")
+    def _route_needs_openrouter(self) -> Self:
+        if self.route is not None and not self.model.startswith("openrouter/"):
+            raise ValueError(f"llm.route only applies to openrouter/ models, not {self.model!r}")
+        return self
 
 
 class RetryConfig(_Strict):

@@ -12,7 +12,9 @@ llm:
   # Any model+route used must have an entry in configs/prices.yaml, or calls are refused.
   model: openrouter/qwen/qwen3.5-9b
   route: {provider: deepinfra, quantization: bf16}
-  temperature: null   # null = provider default; many current models reject other values
+  # 0 where the route supports it (AGENTS.md §10); Qwen3.5 on deepinfra/bf16 does. Use null
+  # (don't send) for models that reject non-default temperatures, e.g. Claude 5.x.
+  temperature: 0.0
   seed: null
   max_tokens: 1024
   timeout_s: 60

@@ -64,6 +64,21 @@ def config_show(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     typer.echo(f"# fingerprint: {cfg.fingerprint()}")
 
 
+@runs_app.command("stats")
+def runs_stats(
+    run_dir: Annotated[Path, typer.Argument(help="A run folder, e.g. runs/<run_id>.")],
+    out: Annotated[Path | None, typer.Option("--out", help="Also write the report here.")] = None,
+) -> None:
+    """Agent system metrics from a run's traces: steps, tools, skills, budgets, cost."""
+    from triagelab.harness.trace_stats import agent_stats, render
+
+    text = render(agent_stats(run_dir), run_dir.name)
+    typer.echo(text)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text.encode("utf-8"))
+
+
 @runs_app.command("list")
 def runs_list(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     """List past runs, newest first, with their cost and the all-time spend."""

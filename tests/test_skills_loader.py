@@ -6,12 +6,7 @@ import pytest
 
 from triagelab.skills.loader import MAX_FILE_CHARS, SkillError, SkillSet, name_problems, parse_skill
 
-
-def make_skill(root: Path, name: str, front: str, body: str = "Do the thing.") -> Path:
-    directory = root / name
-    directory.mkdir(parents=True)
-    (directory / "SKILL.md").write_text(f"---\n{front}\n---\n\n{body}\n", encoding="utf-8")
-    return directory
+from .skill_fixtures import make_skill
 
 
 @pytest.fixture

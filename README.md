@@ -76,6 +76,23 @@ flowchart LR
 
 Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from the run registry with `triagelab results --split dev`).
 
+## Finding the original of a duplicate: time-aware retrieval (M3)
+
+202 duplicates from the train and dev windows, each searched **as of the moment it was opened**. 152 are reachable (their original is in the index at that moment). The table covers reachable queries, with 95% bootstrap intervals.
+
+| retriever | Recall@1 | Recall@10 | MRR |
+|---|---|---|---|
+| BM25 (own, time-aware) | 0.37 [0.30, 0.45] | 0.65 [0.57, 0.72] | 0.47 [0.40, 0.54] |
+| dense (arctic-embed-s, local CPU) | 0.54 [0.45, 0.62] | 0.76 [0.70, 0.83] | 0.62 [0.55, 0.69] |
+| hybrid (reciprocal rank fusion) | 0.52 [0.44, 0.60] | 0.76 [0.68, 0.82] | 0.61 [0.55, 0.68] |
+
+- **Embeddings matter.** Dense retrieval beats BM25 by **+0.14 MRR [+0.08, +0.21]** (paired bootstrap on the same queries). Duplicates describe the same bug in different words.
+- **Negative result: fusion added nothing over dense** here (−0.002 [−0.046, +0.042]). Hybrid stays the default because agent-written queries will be short and identifier-heavy, and M4 re-measures that choice. → [ADR-0023](docs/DECISIONS.md#adr-0023-hybrid-search-stays-the-default-no-query-prefix)
+- **Coverage is the other ceiling.** A quarter of originals predate the indexed history, so over *all* duplicates the best Recall@10 is 0.57.
+- **Even the statistics are time-aware.** Off-the-shelf BM25 computes IDF over the whole corpus, which lets future issues shape past rankings. Ours uses only what existed at query time, and a test proves that adding future documents never changes a past score.
+
+Full report: [reports/retrieval/python__cpython.md](reports/retrieval/python__cpython.md) (`triagelab retrieval eval`).
+
 ## The dataset: CPython issues, exactly as they were opened
 
 5,476 [python/cpython](https://github.com/python/cpython) issues (May 2025 – Aug 2026), with silver ground truth for all four tasks. See the [dataset card](data/DATASET_CARD.md) and the [generated report](reports/data/python__cpython.md).
@@ -111,6 +128,14 @@ Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from t
 - **The provider behind a protocol.**
   - LiteLLM lives in one adapter, with its import-time network fetch, hidden retries and silent parameter dropping all turned off.
   - Everything else is tested offline against a fake backend. → [ADR-0003](docs/DECISIONS.md#adr-0003-litellm-behind-our-own-client)
+- **A read-only MCP server with the time cutoff enforced server-side.**
+  - `repo-intel` exposes five tools: similar issues, a past issue as of a date, code search on a frozen checkout, CODEOWNERS, components.
+  - Every tool is annotated read-only and returns bounded, structured output.
+  - The cutoff (`as_of`) is enforced three ways: the corpus refuses later issues, the server has an optional ceiling, and the harness will inject `as_of` itself. The prompt is never the control.
+  - Tested in three layers: unit tests, a real MCP client in-process, and a scripted run of the official MCP Inspector. → [ADR-0021](docs/DECISIONS.md#adr-0021-the-repo-intel-mcp-server)
+- **Jobs that survive being killed.**
+  - The 12k-issue embedding build is resumable and keyed by issue number, with atomic chunk writes.
+  - It was stopped twice under memory pressure and finished without redoing work.
 - **Run provenance.**
   - Every run records its resolved config, config fingerprint, git SHA (flagged if dirty), versions and cost.
   - Run folders are claimed atomically and never overwritten.
@@ -118,6 +143,7 @@ Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from t
   - SHA-pinned actions and a least-privilege token.
   - The same pre-commit hooks locally and in CI, with workflows linted by actionlint.
   - An Ubuntu + Windows test matrix, and Dependabot for both actions and the `uv` lockfile.
+  - A path-filtered MCP workflow runs the MCP client contract tests and builds the wheel only when the server or retrieval code changes.
   - Planned: an LLM regression gate that posts paired-bootstrap metric deltas on PRs, and an approval-gated, audited one-time test-set evaluation.
 - **Verify, don't remember.** Before any code, every external API was checked against current docs, and several contradicted older assumptions. → [M0 learning note](docs/learning/M0-foundations.md)
 
@@ -126,7 +152,7 @@ Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from t
 - [x] **M0 Foundations:** config, cached and budgeted model client, run registry, CLI, hardened CI
 - [x] **M1 Data:** collection, creation-time snapshots, ground-truth derivation, time splits, leakage tests
 - [x] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
-- [ ] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
+- [x] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
 - [ ] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
 - [ ] **M5 Gold labels, judge, failure taxonomy**
 - [ ] **M6 Iteration loop + LLM regression gate in CI**
@@ -154,6 +180,14 @@ uv run triagelab data build   -p configs/repos/python__cpython.yaml
 uv run triagelab eval -c configs/experiments/e1-classifier.yaml --split dev
 uv run triagelab compare runs/<run_a> runs/<run_b>   # paired-bootstrap deltas
 uv run triagelab results --split dev                 # reports/results/dev.md
+
+# Retrieval + MCP server (embedding ~12k issues takes ~30 min on CPU; resumable)
+uv run triagelab data collect -p configs/repos/python__cpython.yaml --index-history
+uv run triagelab data checkout -p configs/repos/python__cpython.yaml   # frozen source tree
+uv run triagelab retrieval build -p configs/repos/python__cpython.yaml
+uv run triagelab retrieval eval  -p configs/repos/python__cpython.yaml
+uv run triagelab mcp serve -p configs/repos/python__cpython.yaml       # stdio
+bash scripts/mcp_inspector_check.sh                                    # official MCP Inspector
 ```
 
 Development:
@@ -170,10 +204,14 @@ configs/            base.yaml, prices.yaml (verified, cited), experiments/ (one 
 configs/repos/      per-repo ground-truth rules (taxonomy, component map, windows)
 src/triagelab/      config · cost · cache · ledger · retry · llm_client · litellm_backend · wiring · cli
   data/             GitHub collector · creation-time snapshots · ground truth · splits · report
-  eval/             run registry (runner, metrics, calibration and judge arrive from M2)
-data/DATASET_CARD.md, reports/data/  dataset documentation and generated statistics
+  eval/             runner · metrics · bootstrap · report · run registry
+  baselines/        majority · TF-IDF + logistic regression · single-shot LLM
+  retrieval/        time-aware corpus · own BM25 · dense index · RRF · embedding store · benchmark
+  mcp_server/       repo-intel: five read-only tools, as_of guard, code search, CODEOWNERS
+data/DATASET_CARD.md, reports/  dataset card, generated data/results/retrieval reports
 docs/               DECISIONS.md (ADRs) · learning/ (one note per milestone)
-.github/            CI workflow, composite setup action, Dependabot
+.github/            CI + path-filtered MCP workflows, composite setup action, Dependabot
+scripts/            MCP Inspector check (layer 3 of the server tests)
 tests/              unit and integration tests, offline by default
 ```
 

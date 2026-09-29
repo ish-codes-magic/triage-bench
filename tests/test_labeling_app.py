@@ -6,11 +6,14 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from triagelab.data.profile import load_profile
-from triagelab.labeling.gold import GoldStore, gold_path, load_items
+from triagelab.labeling.gold import GoldStore, LabelingItem, gold_path, load_items
+from triagelab.labeling.ratings import RatingStore, sample_items
+from triagelab.triage import TriageResult
 
 from .smoke_dataset import PROFILE_PATH, write_smoke_dataset
 
-APP = Path(__file__).resolve().parents[1] / "src" / "triagelab" / "labeling" / "app.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+APP = REPO_ROOT / "src" / "triagelab" / "labeling" / "app.py"
 
 
 @pytest.fixture
@@ -55,3 +58,50 @@ def test_blind_then_final_pass_writes_one_gold_record(data_dir: Path) -> None:
     assert record.final.labels == ["type-crash"]
     assert record.blind.labels == ["type-bug"]  # the blind answer is kept
     assert not at.subheader[0].value.startswith(f"#{n} ")  # moved on to the next issue
+
+
+def write_run(runs: Path, name: str, items: list[LabelingItem], comment: str) -> Path:
+    run = runs / f"20260930-000000-{name}"
+    run.mkdir(parents=True)
+    predictions = [
+        TriageResult(
+            issue_ref=i.snapshot.issue_ref, triage_comment=f"{comment} {i.snapshot.number}"
+        )
+        for i in items
+    ]
+    (run / "predictions.jsonl").write_text(
+        "".join(p.model_dump_json() + "\n" for p in predictions), encoding="utf-8"
+    )
+    return run
+
+
+def test_rating_page_scores_every_criterion_blind_to_the_system(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRIAGELAB_RUBRIC", str(REPO_ROOT / "configs" / "judge" / "rubric.yaml"))
+    dev = [i for i in load_items(data_dir, load_profile(PROFILE_PATH)) if i.split == "dev"][:3]
+    runs = {
+        "agent": write_run(tmp_path / "runs", "agent", dev, "Agent says"),
+        "single": write_run(tmp_path / "runs", "single", dev, "Single says"),
+    }
+    store = RatingStore(data_dir)
+    store.write_items(sample_items(runs))
+    with pytest.raises(FileExistsError):  # the rated set is frozen once written
+        store.write_items(sample_items(runs))
+    page = tmp_path / "rate_page.py"
+    page.write_text(
+        "from triagelab.labeling import rating_page\nrating_page.render()\n", encoding="utf-8"
+    )
+    at = AppTest.from_file(str(page), default_timeout=60).run()
+    assert not at.exception
+    assert not any("agent" in t.value.lower() or "single" in t.value.lower() for t in at.markdown)
+
+    at = button(at, "Save and next")
+    assert any("Score every criterion" in e.value for e in at.error)
+    first = store.items()[0]
+    for criterion in ("correctness", "actionability", "tone"):
+        at.segmented_control(key=f"rate_{first.item_id}_{criterion}").set_value(3)
+    at = button(at, "Save and next")
+    rating = store.ratings()[first.item_id]
+    assert rating.scores == {"correctness": 3, "actionability": 3, "tone": 3}
+    assert rating.rubric_version == 1

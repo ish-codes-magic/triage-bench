@@ -187,3 +187,28 @@ def test_inline_schema_expands_refs_and_drops_titles() -> None:
     assert "$defs" not in text
     assert "title" not in text
     assert schema["properties"]["guesses"]["items"]["properties"]["confidence"]["maximum"] == 1.0
+
+
+def test_the_first_call_can_be_forced_to_a_tool(tmp_path: Path) -> None:
+    backend = FakeBackend(
+        script=[
+            completion(calls=(call("echo", {}, "c1"),)),
+            completion(calls=(call(SUBMIT, VALID, "c2"),)),
+        ]
+    )
+    tracer = RunTracer(run_id="r", jsonl_path=None)
+    tools: list[Tool] = [Echo()]
+    run_loop(
+        client=make_client(tmp_path, backend),
+        base=LLMRequest(model=FAKE_MODEL, messages=(), max_tokens=100),
+        messages=[Message(role="system", content="s"), Message(role="user", content="u")],
+        toolbox=Toolbox(tools, max_result_chars=1000),
+        submit=submit_tool(Answer, "Submit."),
+        answer_type=Answer,
+        budget=BudgetTracker(AgentBudgetConfig()),
+        context_limit_tokens=10_000,
+        max_validation_retries=2,
+        trace=tracer.issue("o/r#1", metadata={}),
+        first_tool_choice="echo",
+    )
+    assert [r.tool_choice for r in backend.requests] == ["echo", None]  # only the first

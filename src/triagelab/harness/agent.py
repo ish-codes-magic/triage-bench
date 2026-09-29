@@ -142,6 +142,8 @@ class AgentTriager:
         tax = profile.taxonomy
         self._allowed_labels = {*tax.type, *tax.area, *self._family_labels}
         self._mcp_infos: list[ToolInfo] = self._select_tools(mcp) if mcp else []
+        activate = agent.skill_activation == "first_call" and bool(len(skills))
+        self._first_tool_choice = "load_skill" if activate else None
         self._system = system_prompt(
             profile.repo,
             has_tools=bool(self._mcp_infos) or bool(len(skills)),
@@ -217,6 +219,7 @@ class AgentTriager:
                 context_limit_tokens=self._agent.context_limit_tokens,
                 max_validation_retries=self._agent.max_validation_retries,
                 trace=trace,
+                first_tool_choice=self._first_tool_choice,
             )
             stop_reason = outcome.stop_reason
             answer = outcome.answer.model_dump() if outcome.answer else None

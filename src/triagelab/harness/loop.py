@@ -101,7 +101,9 @@ def run_loop[A: BaseModel](
     context_limit_tokens: int,
     max_validation_retries: int,
     trace: IssueTrace,
+    first_tool_choice: str | None = None,
 ) -> LoopOutcome[A]:
+    """`first_tool_choice` forces the first model call to use that tool (e.g. load_skill)."""
     convo = list(messages)
     logged = 0  # prompt messages (system/user) already written to the trace
     tools = (*toolbox.specs, submit)
@@ -128,11 +130,12 @@ def run_loop[A: BaseModel](
             out.compactions += 1
             trace.event("compaction", step=out.steps + 1, **compaction._asdict())
         forced = budget.submit_reason()
+        opening = first_tool_choice if out.steps == 0 else None
         request = base.model_copy(
             update={
                 "messages": tuple(convo),
                 "tools": tools,
-                "tool_choice": SUBMIT if forced else None,
+                "tool_choice": SUBMIT if forced else opening,
             }
         )
         response = client.complete(request)

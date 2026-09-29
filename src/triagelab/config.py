@@ -130,6 +130,11 @@ class AgentConfig(_Strict):
 
     skills: list[str] = Field(default_factory=list[str], description="Skill folder names.")
     skills_dir: PortablePath = Path("skills")
+    # "model": the model decides whether to call load_skill (the spec's progressive
+    # disclosure). "first_call": the harness makes the first call load_skill; the model
+    # still chooses which reference files to read. Iteration 4: M4's agent loaded a skill
+    # on 1% of issues when left to decide.
+    skill_activation: Literal["model", "first_call"] = "model"
     # MCP tools to expose; None = every tool the server lists.
     tools: list[str] | None = None
     budget: AgentBudgetConfig = AgentBudgetConfig()

@@ -161,3 +161,27 @@ def test_scored_fields_are_required_in_the_submit_schema() -> None:
     # "Optional" reads as "skip me" to a model: every field we score must be required.
     required = set(inline_schema(AgentAnswer)["required"])
     assert {"labels", "component", "component_top3", "needs_info"} <= required
+
+
+@pytest.mark.parametrize(
+    ("activation", "expected"), [("model", None), ("first_call", "load_skill")]
+)
+def test_skill_activation_can_force_the_first_call(
+    tmp_path: Path, activation: str, expected: str | None
+) -> None:
+    backend = FakeBackend(script=[completion(calls=(call("submit_triage", ANSWER, "c1"),))])
+    agent = AgentTriager(
+        client=make_client(tmp_path, backend),
+        llm=LLMConfig(model=FAKE_MODEL),
+        agent=AgentConfig.model_validate(
+            {"skills": ["triage-cpython"], "skill_activation": activation}
+        ),
+        profile=PROFILE,
+        family_labels=[],
+        skills=SkillSet.from_dir(REPO_ROOT / "skills", ["triage-cpython"]),
+        mcp=None,
+        tracer=RunTracer(run_id="r", jsonl_path=None),
+        max_body_chars=1000,
+    )
+    agent.triage(ISSUE_3)
+    assert backend.requests[0].tool_choice == expected

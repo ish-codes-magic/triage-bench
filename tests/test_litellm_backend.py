@@ -3,7 +3,8 @@
 import pytest
 from litellm.exceptions import AuthenticationError, BadRequestError, RateLimitError
 
-from triagelab.litellm_backend import LiteLLMBackend
+from triagelab.config import ProviderRoute
+from triagelab.litellm_backend import LiteLLMBackend, build_params
 from triagelab.llm_client import LLMRequest, Message
 
 REQUEST = LLMRequest(
@@ -37,3 +38,26 @@ def test_bad_request_and_auth_are_not_retryable() -> None:
 
 def test_retry_after_is_none_without_a_response() -> None:
     assert LiteLLMBackend().retry_after_s(RuntimeError("boom")) is None
+
+
+def test_unrouted_request_sends_no_provider_preferences() -> None:
+    assert "extra_body" not in build_params(REQUEST, timeout_s=5)
+
+
+def test_routed_request_pins_one_provider_and_precision() -> None:
+    routed = REQUEST.model_copy(
+        update={
+            "model": "openrouter/qwen/qwen3.5-9b",
+            "route": ProviderRoute(provider="deepinfra", quantization="bf16"),
+        }
+    )
+    params = build_params(routed, timeout_s=5)
+    assert params["extra_body"] == {
+        "provider": {
+            "only": ["deepinfra"],
+            "quantizations": ["bf16"],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+        }
+    }
+    assert params["num_retries"] == 0

@@ -24,6 +24,7 @@ from typing import Any, cast
 import litellm
 from litellm.exceptions import AuthenticationError, BadRequestError
 
+from triagelab.config import ProviderRoute
 from triagelab.cost import Usage
 from triagelab.llm_client import Completion, LLMRequest
 
@@ -40,28 +41,7 @@ class LiteLLMBackend:
         self._extra_params = extra_params or {}
 
     def complete(self, request: LLMRequest, *, timeout_s: float) -> Completion:
-        params: dict[str, Any] = {
-            "model": request.model,
-            "messages": [m.model_dump() for m in request.messages],
-            # Always explicit: if omitted, LiteLLM fills in the model's maximum output.
-            "max_tokens": request.max_tokens,
-            "timeout": timeout_s,
-            "num_retries": 0,
-            **self._extra_params,
-        }
-        if request.temperature is not None:
-            params["temperature"] = request.temperature
-        if request.seed is not None:
-            params["seed"] = request.seed
-        if request.response_schema is not None:
-            params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": request.schema_name or "response",
-                    "schema": request.response_schema,
-                    "strict": True,
-                },
-            }
+        params = {**build_params(request, timeout_s=timeout_s), **self._extra_params}
         # LiteLLM's response types are only partially annotated; treat the boundary as
         # untyped and validate everything we keep into our own pydantic models.
         response = cast(Any, litellm.completion(**params))
@@ -84,6 +64,53 @@ class LiteLLMBackend:
             return float(headers.get("retry-after"))
         except (TypeError, ValueError):
             return None  # absent, or an HTTP-date we don't bother parsing
+
+
+def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
+    """Translate our request into `litellm.completion` keyword arguments."""
+    params: dict[str, Any] = {
+        "model": request.model,
+        "messages": [m.model_dump() for m in request.messages],
+        # Always explicit: if omitted, LiteLLM fills in the model's maximum output.
+        "max_tokens": request.max_tokens,
+        "timeout": timeout_s,
+        "num_retries": 0,
+    }
+    if request.temperature is not None:
+        params["temperature"] = request.temperature
+    if request.seed is not None:
+        params["seed"] = request.seed
+    if request.response_schema is not None:
+        params["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": request.schema_name or "response",
+                "schema": request.response_schema,
+                "strict": True,
+            },
+        }
+    if request.route is not None:
+        # LiteLLM merges `extra_body` into the JSON it sends to OpenRouter.
+        params["extra_body"] = {"provider": openrouter_provider_prefs(request.route)}
+    return params
+
+
+def openrouter_provider_prefs(route: ProviderRoute) -> dict[str, Any]:
+    """OpenRouter's `provider` routing object that pins a call to exactly one endpoint.
+
+    - `only` + `quantizations` select the provider and precision.
+    - `allow_fallbacks: False` fails the call instead of silently using another provider.
+    - `require_parameters: True` refuses providers that would drop one of our parameters
+      (e.g. logprobs or the JSON schema) rather than quietly ignoring it.
+    """
+    prefs: dict[str, Any] = {
+        "only": [route.provider],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+    }
+    if route.quantization is not None:
+        prefs["quantizations"] = [route.quantization]
+    return prefs
 
 
 def _to_completion(response: Any) -> Completion:

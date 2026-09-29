@@ -14,7 +14,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from triagelab.cache import DiskCache
-from triagelab.config import RetryConfig
+from triagelab.config import ProviderRoute, RetryConfig
 from triagelab.cost import BudgetGuard, PriceTable, Usage, cost_usd, worst_case_cost_usd
 from triagelab.hashing import canonical_json, stable_hash
 from triagelab.ledger import SpendEntry, SpendLedger
@@ -47,6 +47,7 @@ class LLMRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     model: str
+    route: ProviderRoute | None = None
     messages: tuple[Message, ...]
     max_tokens: int = Field(gt=0)
     temperature: float | None = None
@@ -54,6 +55,13 @@ class LLMRequest(BaseModel):
     response_schema: dict[str, Any] | None = None
     schema_name: str | None = None
     sample: int = Field(default=0, ge=0)
+
+    def price_key(self) -> str:
+        """The price-table key: the model, plus the pinned provider when there is one.
+
+        The same OpenRouter model costs different amounts on different providers.
+        """
+        return f"{self.model}@{self.route.tag}" if self.route else self.model
 
     def cache_key(self) -> str:
         return stable_hash({"v": CACHE_FORMAT_VERSION, **self.model_dump(mode="json")})
@@ -153,7 +161,7 @@ class LLMClient:
         self.stats = CallStats()
 
     def complete(self, request: LLMRequest) -> LLMResponse:
-        price = self._prices.price_for(request.model)  # unpriced model: refuse before anything
+        price = self._prices.price_for(request.price_key())  # unpriced: refuse before anything
         key = request.cache_key()
         started = self._clock()
 
@@ -192,7 +200,7 @@ class LLMClient:
             SpendEntry(
                 at=self._now(),
                 run_id=self._run_id,
-                model=request.model,
+                model=request.price_key(),
                 resolved_model=completion.resolved_model,
                 tokens_in=completion.usage.tokens_in,
                 tokens_out=completion.usage.tokens_out,

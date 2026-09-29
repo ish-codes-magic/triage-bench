@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from triagelab.cache import DiskCache
-from triagelab.config import RetryConfig
+from triagelab.config import ProviderRoute, RetryConfig
 from triagelab.cost import (
     BudgetExceededError,
     BudgetGuard,
@@ -34,11 +34,16 @@ PRICES = PriceTable(
 
 
 def _client(
-    tmp_path: Path, backend: FakeBackend, *, per_run_usd: float = 1.0, cache: bool = True
+    tmp_path: Path,
+    backend: FakeBackend,
+    *,
+    per_run_usd: float = 1.0,
+    cache: bool = True,
+    prices: PriceTable = PRICES,
 ) -> LLMClient:
     return LLMClient(
         backend=backend,
-        prices=PRICES,
+        prices=prices,
         guard=BudgetGuard(per_run_usd=per_run_usd, total_usd=100.0, spent_before_run_usd=0.0),
         ledger=SpendLedger(tmp_path / "ledger.jsonl"),
         cache=DiskCache(tmp_path / "cache") if cache else None,
@@ -155,3 +160,32 @@ def test_prompt_bound_counts_bytes_not_characters() -> None:
 def test_prompt_bound_includes_the_schema() -> None:
     typed = _request().model_copy(update={"response_schema": Verdict.model_json_schema()})
     assert prompt_tokens_upper_bound(typed) > prompt_tokens_upper_bound(_request())
+
+
+ROUTE = ProviderRoute(provider="deepinfra", quantization="bf16")
+
+
+def test_price_key_includes_the_pinned_route() -> None:
+    assert _request().price_key() == MODEL
+    assert _request().model_copy(update={"route": ROUTE}).price_key() == f"{MODEL}@deepinfra/bf16"
+
+
+def test_route_is_part_of_the_cache_key() -> None:
+    # A different provider or precision can give a different answer: never share entries.
+    assert _request().cache_key() != _request().model_copy(update={"route": ROUTE}).cache_key()
+
+
+def test_routed_call_is_priced_by_route(tmp_path: Path) -> None:
+    routed_prices = PriceTable(
+        models={
+            f"{MODEL}@deepinfra/bf16": ModelPrice(
+                input_per_mtok=1.0, output_per_mtok=1.0, source="t", verified_on=date(2026, 9, 29)
+            )
+        }
+    )
+    client = _client(tmp_path, FakeBackend(), prices=routed_prices)
+    resp = client.complete(_request().model_copy(update={"route": ROUTE}))
+    # (1000 + 100) tokens * $1/M
+    assert resp.cost_usd == pytest.approx(0.0011)
+    with pytest.raises(UnknownModelPriceError):
+        client.complete(_request(sample=1))  # the unrouted key has no price here

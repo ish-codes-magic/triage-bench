@@ -111,6 +111,7 @@ def llm_ping(
     client = wiring.build_llm_client(cfg, run_id=manifest.run_id)
     request = LLMRequest(
         model=cfg.llm.model,
+        route=cfg.llm.route,
         messages=(Message(role="user", content=PING_PROMPT),),
         max_tokens=cfg.llm.max_tokens,
         temperature=cfg.llm.temperature,
@@ -127,7 +128,8 @@ def llm_ping(
     source = "cache hit" if response.cache_hit else "live call"
     spent_total = SpendLedger(cfg.paths.ledger_file).total_usd()
     typer.echo(f"run       {manifest.run_id}")
-    typer.echo(f"model     {response.model} -> {response.resolved_model or 'unknown'}")
+    route = f" @ {cfg.llm.route.tag}" if cfg.llm.route else ""
+    typer.echo(f"model     {response.model}{route} -> {response.resolved_model or 'unknown'}")
     typer.echo(f"reply     {pong.reply}")
     typer.echo(f"tokens    in={response.usage.tokens_in} out={response.usage.tokens_out}")
     typer.echo(

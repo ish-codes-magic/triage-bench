@@ -1,0 +1,62 @@
+name: MCP server
+
+# Runs only when the server, retrieval layer or their tests change (path filters), so a
+# docs-only PR doesn't pay for it. The full suite still runs in ci.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/triagelab/mcp_server/**"
+      - "src/triagelab/retrieval/**"
+      - "tests/test_mcp_server.py"
+      - "tests/test_corpus.py"
+      - "tests/test_retrieval_lexical.py"
+      - "tests/test_embeddings.py"
+      - "tests/test_codeowners.py"
+      - "tests/test_code_search.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/mcp.yml"
+  pull_request:
+    paths:
+      - "src/triagelab/mcp_server/**"
+      - "src/triagelab/retrieval/**"
+      - "tests/test_mcp_server.py"
+      - "tests/test_corpus.py"
+      - "tests/test_retrieval_lexical.py"
+      - "tests/test_embeddings.py"
+      - "tests/test_codeowners.py"
+      - "tests/test_code_search.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/mcp.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contract:
+    name: MCP contract + wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      - name: MCP contract tests (real client, in-process) and retrieval units
+        run: >
+          uv run pytest -q tests/test_mcp_server.py tests/test_corpus.py
+          tests/test_retrieval_lexical.py tests/test_embeddings.py
+          tests/test_codeowners.py tests/test_code_search.py
+      - name: Build the wheel
+        run: uv build --wheel
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: triagelab-wheel
+          path: dist/*.whl
+          retention-days: 7

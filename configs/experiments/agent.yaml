@@ -14,5 +14,6 @@ system:
   kind: agent
   agent:
     skills: [triage-cpython]
+    skill_activation: first_call  # iteration 4: left to decide, the model loaded it on 1-2%
     budget: {max_steps: 12, max_tool_calls: 15, max_tokens: 200000, max_cost_usd: 0.03}
     mcp: {transport: stdio, dense: true}

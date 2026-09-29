@@ -221,6 +221,14 @@ def eval_cmd(
         bool, typer.Option("--allow-test", help="Unlock the test split (max twice, logged).")
     ] = False,
     resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
+    otlp_endpoint: Annotated[
+        str | None,
+        typer.Option(
+            "--otlp-endpoint",
+            envvar="TRIAGELAB_OTLP_ENDPOINT",
+            help="Also export agent traces here, e.g. http://localhost:6006/v1/traces.",
+        ),
+    ] = None,
 ) -> None:
     """Run an experiment on a split and print its scorecard (with 95% bootstrap CIs)."""
     from triagelab.data.splits import parse_split
@@ -232,6 +240,9 @@ def eval_cmd(
         raise typer.BadParameter(str(err)) from err
     load_dotenv()
     cfg = load_config(config)
+    if otlp_endpoint:  # a viewing concern: it changes no model request or result
+        tracing = cfg.tracing.model_copy(update={"otlp_endpoint": otlp_endpoint})
+        cfg = cfg.model_copy(update={"tracing": tracing})
     try:
         outcome = run_eval(
             cfg,

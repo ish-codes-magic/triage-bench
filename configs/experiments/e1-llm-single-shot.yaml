@@ -1,0 +1,5 @@
+# E1 baseline: one structured call to the agent model, no tools, no skills, thinking off.
+extends: ../base.yaml
+name: e1-llm-single-shot
+system: {kind: llm_single_shot}
+llm: {reasoning: none, max_tokens: 1500}

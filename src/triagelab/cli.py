@@ -180,3 +180,82 @@ def data_build(
     paths = build_dataset(load_profile(profile), data_dir, reports_dir)
     for name, path in paths.model_dump().items():
         typer.echo(f"{name:12} {Path(path).as_posix()}")
+
+
+@app.command("eval")
+def eval_cmd(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Experiment config YAML.")],
+    split: Annotated[str, typer.Option(help="dev | test | train")] = "dev",
+    limit: Annotated[int | None, typer.Option(help="Only the first N issues.")] = None,
+    allow_test: Annotated[
+        bool, typer.Option("--allow-test", help="Unlock the test split (max twice, logged).")
+    ] = False,
+    resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
+) -> None:
+    """Run an experiment on a split and print its scorecard (with 95% bootstrap CIs)."""
+    from triagelab.data.splits import parse_split
+    from triagelab.eval.runner import TestSetLockedError, run_eval
+
+    try:
+        split_name = parse_split(split)
+    except ValueError as err:
+        raise typer.BadParameter(str(err)) from err
+    load_dotenv()
+    cfg = load_config(config)
+    try:
+        outcome = run_eval(
+            cfg,
+            split=split_name,
+            runs_dir=cfg.paths.runs_dir,
+            command=f"eval --config {config.as_posix()} --split {split}",
+            log=typer.echo,
+            limit=limit,
+            allow_test=allow_test,
+            resume_dir=resume,
+        )
+    except TestSetLockedError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=3) from err
+    typer.echo(f"run {outcome.run_id}: {outcome.completed}/{outcome.total} issues")
+    if outcome.stopped_reason:
+        typer.echo(f"stopped: {outcome.stopped_reason}", err=True)
+        typer.echo(f"resume with: --resume {outcome.run_dir.as_posix()}", err=True)
+        raise typer.Exit(code=2)
+    card = outcome.scorecard
+    assert card is not None
+    for name, m in card.metrics.items():
+        point = "n/a" if m.point is None else f"{m.point:.3f} [{m.low:.3f}, {m.high:.3f}]"
+        weighted = "n/a" if m.weighted is None else f"{m.weighted:.3f}"
+        typer.echo(f"  {name:20} {point:26} natural-rate: {weighted}")
+    s = card.system
+    typer.echo(
+        f"  cost ${s.cost_usd_total:.4f} (${s.cost_usd_per_issue:.5f}/issue) · "
+        f"p50 {s.latency_ms_p50 / 1000:.1f}s p95 {s.latency_ms_p95 / 1000:.1f}s · errors {s.errors}"
+    )
+
+
+@app.command()
+def compare(run_a: Path, run_b: Path) -> None:
+    """Paired-bootstrap comparison of two runs (B - A) on the issues both predicted."""
+    from triagelab.eval.report import compare_runs, render_comparison
+
+    typer.echo(render_comparison(compare_runs(run_a, run_b), run_a.name, run_b.name))
+
+
+@app.command()
+def results(
+    split: str = "dev",
+    config: ConfigOpt = DEFAULT_CONFIG,
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/results"),
+) -> None:
+    """Write the results table (latest run per experiment) to reports/results/<split>.md."""
+    from triagelab.eval.report import load_scored_runs, results_table
+
+    cfg = load_config(config)
+    table = results_table(load_scored_runs(cfg.paths.runs_dir), split)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{split}.md"
+    heading = f"# Results: {split} split"
+    out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
+    typer.echo(table)
+    typer.echo(f"written to {out.as_posix()}")

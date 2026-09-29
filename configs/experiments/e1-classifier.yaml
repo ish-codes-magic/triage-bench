@@ -1,0 +1,4 @@
+# E1 baseline: TF-IDF + logistic regression, TF-IDF nearest neighbour for duplicates.
+extends: ../base.yaml
+name: e1-classifier
+system: {kind: classifier}

@@ -1,0 +1,5 @@
+# Same as e1-llm-single-shot but with the model's default thinking: does reasoning pay?
+extends: ../base.yaml
+name: e1-llm-single-shot-thinking
+system: {kind: llm_single_shot}
+llm: {reasoning: default, max_tokens: 8000}

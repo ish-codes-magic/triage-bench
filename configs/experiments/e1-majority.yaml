@@ -1,0 +1,4 @@
+# E1 baseline: most frequent answer from training (the floor).
+extends: ../base.yaml
+name: e1-majority
+system: {kind: majority}

@@ -18,6 +18,10 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 | [0012](#adr-0012-reconstruct-creation-time-text-and-refuse-when-unprovable) | Reconstruct creation-time text, and refuse when unprovable | M1 |
 | [0013](#adr-0013-silver-ground-truth-rules-with-provenance) | Silver ground-truth rules, with provenance | M1 |
 | [0014](#adr-0014-time-splits-with-stratified-weighted-small-samples) | Time splits with stratified, weighted small samples | M1 |
+| [0015](#adr-0015-metric-definitions-subsets-and-bootstrap) | Metric definitions, subsets and bootstrap | M2 |
+| [0016](#adr-0016-e1-baselines-and-tf-idf-before-embeddings) | E1 baselines, and TF-IDF before embeddings | M2 |
+| [0017](#adr-0017-a-concurrent-resumable-budget-safe-eval-runner) | A concurrent, resumable, budget-safe eval runner | M2 |
+| [0018](#adr-0018-branch-protection-and-evals-in-ci) | Branch protection and evals in CI | M2 |
 
 ---
 
@@ -316,3 +320,94 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - Every task has positives in both samples.
 - Confidence intervals will be wide at n = 50, and they'll be reported honestly.
 - The build is deterministic, and its dataset hash is recorded by every run.
+
+## ADR-0015: Metric definitions, subsets and bootstrap
+
+**Context.**
+- Samples are small (dev 100, test 50) and stratified.
+- Silver labels are incomplete: an untriaged issue has no labels, and an issue fixed without a merged PR has no component.
+
+**Decision.**
+- **Metrics are hand-written and registered in one place** (`eval/score.py:METRICS`). Point estimates, bootstrap intervals and paired comparisons all call the same functions.
+- **Subsets are part of each metric's definition:**
+  - T1 is scored on `human_triaged` issues only;
+  - T3 is scored where a gold component exists;
+  - T2 and T4 are scored on every issue.
+- **T2 scoring:**
+  - a duplicate counts only if the *right original* is named (a wrong original counts as both an FP and an FN);
+  - `t2_detect_f1` is the looser "was it flagged at all";
+  - Recall@k and MRR exist for M3 retrieval.
+- **Intervals:**
+  - 95% percentile bootstrap over issues, 1,000 resamples, seeded;
+  - resamples where a metric is undefined (no positives drawn) are dropped and counted, not scored 0;
+  - comparisons use a paired bootstrap on the same resampled issues, and a change is only "significant" if its interval excludes 0.
+- **Weighted estimates:** every metric also reports a sampling-weighted natural-rate estimate.
+
+**Consequences.**
+- `eval` and `compare` can't disagree about what a metric means.
+- Wide intervals are reported honestly instead of hidden.
+- Silver T1 numbers carry the known template-label effect: type labels applied by issue forms are partly predictable from the form's headings. That's why type and area F1 are reported separately.
+
+## ADR-0016: E1 baselines, and TF-IDF before embeddings
+
+**Context.**
+- E1 asks whether cheap methods already solve the tasks.
+- The local embedding model (§0) isn't chosen yet, and M3's dense retrieval needs one anyway.
+
+**Decision.**
+- **Majority:** the most frequent type and area label, component and needs-info class, taken from train.
+- **Classifier:**
+  - TF-IDF (1–2-grams, sublinear TF, fitted on train only) with balanced logistic regression: one-vs-rest labels (≥ 10 triaged examples), multiclass component, binary needs-info;
+  - duplicates by TF-IDF nearest neighbour among issues created *strictly before* the query, with the threshold tuned on train;
+  - `sklearn` has no stubs, so only this module relaxes pyright's unknown-type reports.
+- **Single-shot LLM:**
+  - one strict-JSON call with generic instructions and the label/component vocabulary, and the issue delimited as untrusted data;
+  - one repair attempt on invalid output, then an empty, recorded fallback;
+  - out-of-taxonomy labels are dropped into `rejected_labels`;
+  - temperature 0 where the route supports it.
+  - It cannot see other issues, so it never predicts duplicates.
+
+**Consequences.**
+- The classifier is a strong, honest floor for T1/T3.
+- Embeddings arrive in M3, where their effect can be measured against this TF-IDF baseline instead of assumed.
+
+## ADR-0017: A concurrent, resumable, budget-safe eval runner
+
+**Context.**
+- LLM calls are slow (15–60 s here), so runs must be parallel.
+- Parallelism breaks naive budget checks.
+- Providers rate-limit.
+- Test-set hygiene must not depend on discipline.
+
+**Decision.**
+- **Concurrency:** a thread pool with a configurable worker count (4 for the OpenRouter Qwen route after 429s at 8).
+- **Budget reservation:** `BudgetGuard.reserve(worst_case)` before each call, then `settle`/`release`, all under a lock.
+- **Resumable:** predictions are appended per issue as they complete, and `--resume` continues a run.
+- **Infrastructure failures:** exceptions raised by a system are marked `infra:`, get one single-worker retry pass, and are never scored as answers.
+- **Budget stop:** stops cleanly and leaves the run unscored.
+- **Test-set guard:** `--split test` needs `--allow-test`, is capped at two evaluations, and every one is logged to `runs/test_evaluations.jsonl`.
+
+**Consequences.**
+- Parallel runs can't overshoot a cap.
+- An outage can't masquerade as model failure.
+- The "test evaluated at most twice" rule is enforced by code.
+
+## ADR-0018: Branch protection and evals in CI
+
+**Context.** The owner asked for branch protection. §15.1 asks for baseline evals in CI from M2.
+
+**Decision.**
+- **Protection on `main`:**
+  - requires `Lint & types`, `Tests (ubuntu-latest)`, `Tests (windows-latest)` and `Leakage guard`, bound to the GitHub Actions app (id 15368) so another app can't spoof them;
+  - branch must be up to date;
+  - no force-push or deletion.
+  - `enforce_admins` stays off, so the owner's direct pushes keep working while PRs (e.g. Dependabot) must pass.
+- **"Eval smoke (fixtures)" job:**
+  - builds a synthetic dataset with the real pipeline;
+  - runs the majority and classifier baselines through `triagelab eval`;
+  - posts the results table to the job summary.
+  - A pytest version asserts the classifier beats majority's whole interval.
+
+**Consequences.**
+- Every push shows an eval, not just tests.
+- **Trade-off:** admin pushes bypass the required checks ("Bypassed rule violations"). Making them binding would mean a PR-per-milestone workflow, which is proposed to the owner.

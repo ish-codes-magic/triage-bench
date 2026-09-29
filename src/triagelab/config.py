@@ -9,6 +9,7 @@ rather than be silently ignored, because a silently ignored setting would invali
 an ablation without anyone noticing.
 """
 
+import copy
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -81,20 +82,26 @@ class Config(_Strict):
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Return a new dict with `override` layered on top of `base`.
 
-    # YOUR TURN
     Rules:
       - A key present only in one input is copied through unchanged.
       - If both values are dicts, merge them recursively.
       - Otherwise the override value wins, including for lists (they are replaced,
         not concatenated) and for an explicit `None`.
-      - Neither input may be mutated.
+      - Neither input is mutated, and the result shares no mutable objects with them.
 
-    Hint: build a fresh dict from `base`, then walk `override.items()`. Recursion handles
-    the nesting; `isinstance(x, dict)` decides whether to recurse. Ask yourself why
-    `dict(base)` alone is not enough to satisfy the no-mutation rule.
-    Tests: tests/test_config.py::test_deep_merge_*
+    Lists replace rather than concatenate so that an experiment can *remove* an item
+    (e.g. a tool) by restating the list. Concatenation could only ever add.
     """
-    raise NotImplementedError("YOUR TURN: implement deep_merge (see docstring)")
+    # deepcopy, not dict(base): a shallow copy shares nested dicts with `base`, so later
+    # edits to the merged config would silently edit the parent config too.
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = deep_merge(cast(dict[str, Any], current), cast(dict[str, Any], value))
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 def _load_raw(path: Path, seen: frozenset[Path] = frozenset()) -> dict[str, Any]:

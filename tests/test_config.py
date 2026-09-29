@@ -48,29 +48,25 @@ def test_inheritance_cycle_is_detected(tmp_path: Path) -> None:
         load_config(tmp_path / "a.yaml")
 
 
-# ---- YOUR TURN: deep_merge -------------------------------------------------------------
+# ---- deep_merge ------------------------------------------------------------------------
 
 
-@pytest.mark.your_turn
 def test_deep_merge_disjoint_keys_are_combined() -> None:
     assert deep_merge({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
 
 
-@pytest.mark.your_turn
 def test_deep_merge_nested_dicts_merge_recursively() -> None:
     base = {"llm": {"model": "m1", "max_tokens": 100}, "name": "base"}
     override = {"llm": {"model": "m2"}}
     assert deep_merge(base, override) == {"llm": {"model": "m2", "max_tokens": 100}, "name": "base"}
 
 
-@pytest.mark.your_turn
 def test_deep_merge_lists_and_none_replace() -> None:
     base: dict[str, Any] = {"tools": ["a", "b"], "seed": 7}
     override: dict[str, Any] = {"tools": ["c"], "seed": None}
     assert deep_merge(base, override) == {"tools": ["c"], "seed": None}
 
 
-@pytest.mark.your_turn
 def test_deep_merge_does_not_mutate_inputs() -> None:
     base = {"llm": {"model": "m1"}}
     override = {"llm": {"max_tokens": 5}}
@@ -80,7 +76,15 @@ def test_deep_merge_does_not_mutate_inputs() -> None:
     assert override == {"llm": {"max_tokens": 5}}
 
 
-@pytest.mark.your_turn
+def test_deep_merge_result_shares_nothing_with_base() -> None:
+    # "retry" exists only in base: a shallow copy would hand back base's own dict.
+    base = {"retry": {"max_attempts": 4}, "tools": ["a"]}
+    result = deep_merge(base, {})
+    result["retry"]["max_attempts"] = 99
+    result["tools"].append("b")
+    assert base == {"retry": {"max_attempts": 4}, "tools": ["a"]}
+
+
 def test_experiment_config_overrides_base(tmp_path: Path) -> None:
     exp = tmp_path / "exp.yaml"
     exp.write_text(

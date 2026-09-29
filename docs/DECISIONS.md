@@ -492,3 +492,25 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - More duplicates become findable without touching the evaluation data.
 - Originals from before 2024 (about 50 of 202) remain unreachable, and that's reported as a coverage limit.
+
+## ADR-0023: Hybrid search stays the default; no query prefix
+
+**Context.**
+- `reports/retrieval/python__cpython.md` covers 202 duplicate queries from train/dev only, 152 of them reachable.
+- Paired bootstrap on reachable queries:
+  - dense beats BM25 (MRR +0.144 [+0.079, +0.212]);
+  - hybrid beats BM25 (MRR +0.143 [+0.102, +0.189]);
+  - hybrid vs. dense shows no evidence of a difference (−0.002 [−0.046, +0.042]).
+- arctic-embed-s's query prefix changed no metric beyond noise (`python__cpython-query-prefix.md`).
+
+**Decision.**
+- **Default mode:** `search_similar_issues` keeps **hybrid** (RRF of BM25 and dense).
+  - It ties dense on full-issue queries.
+  - Its gain over BM25 has a tighter interval, so it loses to BM25 on fewer individual queries.
+  - The agent will send short, identifier-heavy queries (function names, error strings), where exact term matching should matter more than it does for whole-issue queries.
+- **Query prefix:** off (the default). The task is symmetric (issue vs. issue), not the question-vs-passage setting the prefix was trained for.
+
+**Consequences.**
+- One default for the server, the M4 harness and E3.
+- Hybrid-vs-dense is **re-measured on agent-written queries** from M4 traces; if dense wins there, the default changes with a new ADR.
+- The hybrid-vs-dense tie is reported as a (mild) negative result: fusion didn't add accuracy here.

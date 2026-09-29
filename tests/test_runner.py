@@ -1,0 +1,166 @@
+"""Runner tests on a small synthetic dataset built with the real build pipeline."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from triagelab import wiring
+from triagelab.config import Config, load_config
+from triagelab.data.build import build_dataset
+from triagelab.data.collect import raw_paths
+from triagelab.data.profile import load_profile
+from triagelab.data.splits import Split
+from triagelab.data.storage import append_jsonl, read_jsonl
+from triagelab.eval.report import compare_runs, load_scored_runs, results_table
+from triagelab.eval.runner import RunOutcome, TestSetLockedError, run_eval
+from triagelab.llm_client import LLMClient
+from triagelab.triage import TriageResult
+
+from .fakes import FakeBackend
+from .test_build import FIXED_NOW, _issues
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PROFILE_PATH = REPO_ROOT / "configs" / "repos" / "python__cpython.yaml"
+
+
+@pytest.fixture
+def workspace(tmp_path: Path) -> Path:
+    profile = load_profile(PROFILE_PATH)
+    issues_path, _ = raw_paths(tmp_path / "data", profile)
+    append_jsonl(issues_path, _issues())
+    build_dataset(profile, tmp_path / "data", tmp_path / "reports", now=lambda: FIXED_NOW)
+    return tmp_path
+
+
+def _config(ws: Path, kind: str, *, per_run_usd: float = 5.0, name: str | None = None) -> Config:
+    cfg = load_config(REPO_ROOT / "configs" / "base.yaml")
+    return cfg.model_validate(
+        {
+            **cfg.model_dump(),
+            "name": name or f"test-{kind}",
+            "system": {"kind": kind},
+            "budget": {"usd_total": 150.0, "usd_per_run": per_run_usd},
+            "cache": {"enabled": False, "dir": str(ws / "cache")},
+            "paths": {
+                "runs_dir": str(ws / "runs"),
+                "prices_file": str(REPO_ROOT / "configs" / "prices.yaml"),
+                "ledger_file": str(ws / "runs" / "ledger.jsonl"),
+            },
+            "dataset": {
+                "profile": str(PROFILE_PATH),
+                "data_dir": str(ws / "data"),
+                "reports_dir": str(ws / "reports"),
+            },
+            "eval": {"concurrency": 3, "bootstrap_resamples": 100},
+        }
+    )
+
+
+def _run(
+    cfg: Config,
+    split: Split = "dev",
+    *,
+    limit: int | None = None,
+    allow_test: bool = False,
+    resume_dir: Path | None = None,
+) -> RunOutcome:
+    return run_eval(
+        cfg,
+        split=split,
+        runs_dir=cfg.paths.runs_dir,
+        command="test",
+        log=lambda _: None,
+        limit=limit,
+        allow_test=allow_test,
+        resume_dir=resume_dir,
+    )
+
+
+def test_majority_run_writes_scored_artifacts(workspace: Path) -> None:
+    outcome = _run(_config(workspace, "majority"))
+    assert outcome.completed == outcome.total == 5
+    assert outcome.scorecard is not None
+    for name in (
+        "predictions.jsonl",
+        "predictions.parquet",
+        "metrics.json",
+        "cost.json",
+        "manifest.json",
+    ):
+        assert (outcome.run_dir / name).is_file(), name
+    manifest = json.loads((outcome.run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["details"]["split"] == "dev"
+    assert len(manifest["details"]["dataset_hash"]) == 64
+
+
+@pytest.fixture
+def fake_llm(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
+    answer = {
+        "labels": [{"label": "type-bug", "confidence": 0.9}],
+        "component": "stdlib",
+        "component_top3": ["stdlib"],
+        "component_confidence": 0.6,
+        "needs_info": False,
+        "needs_info_confidence": 0.1,
+        "missing_info": [],
+        "triage_comment": "ok",
+    }
+    backend = FakeBackend(text=json.dumps(answer))
+    real = wiring.build_llm_client
+
+    def build(cfg: Config, *, run_id: str) -> LLMClient:
+        return real(cfg, run_id=run_id, backend=backend)
+
+    monkeypatch.setattr(wiring, "build_llm_client", build)
+    return backend
+
+
+def test_llm_run_is_parallel_safe_and_costed(workspace: Path, fake_llm: FakeBackend) -> None:
+    outcome = _run(_config(workspace, "llm_single_shot"))
+    assert outcome.scorecard is not None
+    assert fake_llm.calls == 5
+    assert outcome.scorecard.system.cost_usd_total > 0
+    cost = json.loads((outcome.run_dir / "cost.json").read_text(encoding="utf-8"))
+    assert cost["calls"] == 5
+
+
+def test_budget_stop_keeps_partial_work_and_leaves_run_unscored(
+    workspace: Path, fake_llm: FakeBackend
+) -> None:
+    outcome = _run(_config(workspace, "llm_single_shot", per_run_usd=1e-9))
+    assert outcome.stopped_reason is not None
+    assert outcome.stopped_reason.startswith("budget")
+    assert outcome.scorecard is None
+    assert fake_llm.calls == 0
+
+
+def test_resume_only_runs_missing_issues(workspace: Path, fake_llm: FakeBackend) -> None:
+    cfg = _config(workspace, "llm_single_shot")
+    first = _run(cfg, limit=2)
+    assert fake_llm.calls == 2
+    resumed = _run(cfg, resume_dir=first.run_dir)
+    assert fake_llm.calls == 5  # only the 3 missing issues were called
+    assert resumed.completed == 5
+    assert len(read_jsonl(first.run_dir / "predictions.jsonl", TriageResult)) == 5
+
+
+def test_test_split_is_locked_and_capped(workspace: Path) -> None:
+    cfg = _config(workspace, "majority")
+    with pytest.raises(TestSetLockedError, match="locked"):
+        _run(cfg, split="test")
+    _run(cfg, split="test", allow_test=True)
+    _run(cfg, split="test", allow_test=True)
+    with pytest.raises(TestSetLockedError, match="2 times"):
+        _run(cfg, split="test", allow_test=True)
+
+
+def test_results_table_and_compare(workspace: Path) -> None:
+    a = _run(_config(workspace, "majority", name="e-a"))
+    b = _run(_config(workspace, "majority", name="e-b"))
+    table = results_table(load_scored_runs(workspace / "runs"), "dev")
+    assert "| e-a | majority |" in table
+    assert "| e-b | majority |" in table
+    rows = compare_runs(a.run_dir, b.run_dir, resamples=100)
+    assert all(r.delta in (0.0, None) for r in rows)  # identical systems
+    assert not any(r.significant for r in rows)

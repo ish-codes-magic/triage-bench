@@ -1,0 +1,15 @@
+# The reference agent (M4): our loop + repo-intel over MCP + the CPython skill.
+# E2-E5 are small diffs against this file (skills, tools, architecture, model).
+extends: ../base.yaml
+name: agent
+llm:
+  reasoning: default   # iteration 2: thinking pays for this 9B model (+0.10 T1 micro-F1)
+  max_tokens: 4000     # per call; thinking tokens count toward it
+  timeout_s: 180
+eval: {concurrency: 4}  # 8 parallel calls hit OpenRouter 429s on this route
+system:
+  kind: agent
+  agent:
+    skills: [triage-cpython]
+    budget: {max_steps: 12, max_tool_calls: 15, max_tokens: 200000, max_cost_usd: 0.03}
+    mcp: {transport: stdio, dense: true}

@@ -1,0 +1,13 @@
+# The T5 judge (AGENTS.md §12.4): a different model family from the agent (ADR-0010).
+# Frozen once calibrated; any change here or in the judge prompt means re-measuring
+# agreement on judge-test.
+extends: ../base.yaml
+name: judge
+llm:
+  model: openrouter/openai/gpt-6-luna
+  route: {provider: openai}
+  temperature: null   # Luna's endpoint doesn't accept temperature (checked 2026-09-30)
+  reasoning: default
+  max_tokens: 4000
+  timeout_s: 120
+eval: {concurrency: 4}

@@ -72,6 +72,12 @@ The agent input is exactly: `issue_ref`, `repo`, `number`, `title`, `body`, `aut
 - **T3 coverage:** only issues with a merged fix have a component. Issues closed without code changes (questions, invalid reports) have none.
 - **Search:** issue enumeration goes through GitHub search, which can omit hidden or spam-filtered issues.
 - **Duplicates are rare,** so duplicate metrics at n = 50 have wide confidence intervals.
+- **Retrieval index history:** the search index also holds 6,413 older issues (2024-01-01 → 2025-05-18, `index_history.jsonl`).
+  - They're **not** part of any split. They're there because half of all duplicate originals predate the dataset window.
+  - Originals from before 2024 (about 50 of 202 duplicates) remain unfindable.
+- **Code search** runs on a source tree frozen at the last `main` commit before the dev window (`398d7e1`, 2026-05-18).
+  - An August issue therefore sees May's code.
+  - Train-window issues see code from after they were filed, but they're never evaluated.
 
 ## Provenance, licensing and privacy
 

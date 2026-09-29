@@ -12,6 +12,7 @@ on:
       - "tests/test_corpus.py"
       - "tests/test_retrieval_lexical.py"
       - "tests/test_embeddings.py"
+      - "tests/test_retrieval_eval.py"
       - "tests/test_codeowners.py"
       - "tests/test_code_search.py"
       - "pyproject.toml"
@@ -25,6 +26,7 @@ on:
       - "tests/test_corpus.py"
       - "tests/test_retrieval_lexical.py"
       - "tests/test_embeddings.py"
+      - "tests/test_retrieval_eval.py"
       - "tests/test_codeowners.py"
       - "tests/test_code_search.py"
       - "pyproject.toml"
@@ -51,7 +53,7 @@ jobs:
       - name: MCP contract tests (real client, in-process) and retrieval units
         run: >
           uv run pytest -q tests/test_mcp_server.py tests/test_corpus.py
-          tests/test_retrieval_lexical.py tests/test_embeddings.py
+          tests/test_retrieval_lexical.py tests/test_embeddings.py tests/test_retrieval_eval.py
           tests/test_codeowners.py tests/test_code_search.py
       - name: Build the wheel
         run: uv build --wheel

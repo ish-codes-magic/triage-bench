@@ -646,6 +646,12 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
   - a measure of how much evidence moves a careful reader (blind vs. final κ in `gold-report`).
 - Duplicates are adjudicated, not discovered: a person can't search the tracker blind.
 
+**Correction (2026-09-30).**
+- The "human baseline" consequence was wrong.
+- When the same annotator adjudicates the gold starting from their own blind answer, the blind pass is anchored on itself. It scored 0.96 against its own gold, which is not comparable to any system.
+- The blind-vs-final agreement *does* measure how much the evidence moves the annotator, and `gold-report` reports it.
+- As a benchmark row, the blind pass is now off by default (`results --with-blind-pass`). It's only meaningful from an annotator independent of the one who adjudicated the gold.
+
 ## ADR-0032: The T5 judge: GPT-6 Luna, reason-then-score, calibrated once per version
 
 **Context.** §12.4: a 3–4 criterion rubric scored 1–4, the owner's ratings split into judge-dev and judge-test, agreement reported as QWK, and bias checks.

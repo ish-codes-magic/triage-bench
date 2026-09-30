@@ -8,7 +8,7 @@ is also reachable (and testable) from Python.
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 import yaml
@@ -39,12 +39,17 @@ retrieval_app = typer.Typer(help="Build and evaluate the retrieval index.", no_a
 mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=True)
 judge_app = typer.Typer(help="Sample and calibrate the T5 comment judge.", no_args_is_help=True)
 failures_app = typer.Typer(help="Tag failures and validate the tagger.", no_args_is_help=True)
+annotate_app = typer.Typer(
+    help="Export annotation batches as files and import the answers (ADR-0035).",
+    no_args_is_help=True,
+)
 app.add_typer(config_app, name="config")
 app.add_typer(data_app, name="data")
 app.add_typer(retrieval_app, name="retrieval")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(judge_app, name="judge")
 app.add_typer(failures_app, name="failures")
+app.add_typer(annotate_app, name="annotate")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
@@ -668,3 +673,144 @@ def failures_validate(
     for r in rows:
         kappa = "n/a" if r.kappa is None else f"{r.kappa:.2f}"
         typer.echo(f"  {r.category:28} human {r.human:3}  llm {r.llm:3}  kappa {kappa}")
+
+
+AnnotatorOpt = Annotated[str, typer.Option(help="Recorded with every answer: a person or a model.")]
+
+
+def _labels(labels: str) -> Literal["silver", "gold"]:
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    return "gold" if labels == "gold" else "silver"
+
+
+@annotate_app.command("export-gold")
+def annotate_export_gold(
+    out_dir: Annotated[Path, typer.Option("--out")],
+    pass_: Annotated[str, typer.Option("--pass", help="blind | final")] = "blind",
+    split: str = "dev",
+    batch_size: int = 20,
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Write gold-label batches; final-pass evidence only for blind-labeled issues."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import export_gold_blind, export_gold_final, gold_context
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    chosen = [i for i in ctx.items if i.split == split]
+    if pass_ == "blind":
+        files = export_gold_blind(
+            chosen, ctx.store.load(), ctx.vocab, ctx.components, out_dir, batch_size
+        )
+    elif pass_ == "final":
+        files = export_gold_final(chosen, ctx.store.load(), out_dir, batch_size)
+    else:
+        raise typer.BadParameter("--pass must be blind or final")
+    typer.echo(f"{len(files)} batch file(s) in {out_dir.as_posix()}")
+
+
+@annotate_app.command("import-gold")
+def annotate_import_gold(
+    files: Annotated[list[Path], typer.Argument(help="JSONL answer files.")],
+    annotator: AnnotatorOpt,
+    pass_: Annotated[str, typer.Option("--pass", help="blind | final")] = "blind",
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Validate and store gold-label answers (a bad file stores nothing)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import gold_context, import_gold_blind, import_gold_final
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    by_ref = {i.snapshot.issue_ref: i for i in ctx.items}
+    for path in files:
+        if pass_ == "blind":
+            n = import_gold_blind(path, ctx.store, by_ref, ctx.vocab, ctx.components, annotator)
+        else:
+            n = import_gold_final(path, ctx.store, ctx.vocab, ctx.components)
+        typer.echo(f"{path.name}: {n} {pass_} answers stored")
+
+
+@annotate_app.command("export-ratings")
+def annotate_export_ratings(
+    out_dir: Annotated[Path, typer.Option("--out")],
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    batch_size: int = 25,
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Write comment-rating batches (opaque ids; keys go to <out>-keys/)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import export_ratings, gold_context
+    from triagelab.labeling.ratings import RatingStore, load_rubric
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    store = RatingStore(cfg.dataset.data_dir)
+    issues = {i.snapshot.issue_ref: i for i in ctx.items}
+    files = export_ratings(
+        store.items(), issues, load_rubric(rubric_path), set(store.ratings()), out_dir, batch_size
+    )
+    typer.echo(f"{len(files)} batch file(s) in {out_dir.as_posix()}")
+
+
+@annotate_app.command("import-ratings")
+def annotate_import_ratings(
+    file: Path,
+    key: Annotated[Path, typer.Option(help="The batch's .key.json file.")],
+    annotator: AnnotatorOpt,
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Validate and store comment ratings."""
+    from triagelab.labeling.batches import import_ratings
+    from triagelab.labeling.ratings import RatingStore, load_rubric
+
+    cfg = load_config(config)
+    store = RatingStore(cfg.dataset.data_dir)
+    n = import_ratings(file, key, store, load_rubric(rubric_path), annotator)
+    typer.echo(f"{file.name}: {n} ratings stored")
+
+
+@annotate_app.command("export-failures")
+def annotate_export_failures(
+    run_dir: Path,
+    out_dir: Annotated[Path, typer.Option("--out")],
+    labels: str = "gold",
+    limit: int = 50,
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Write failure-review batches: the diff, the issue and the agent's steps."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import export_failures, gold_context, run_failures
+    from triagelab.labeling.failure_tags import FailureTagStore
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    failures, events = run_failures(run_dir, _labels(labels))
+    tags = FailureTagStore(cfg.dataset.data_dir).load()
+    tagged = {ref for (run, ref) in tags if run == run_dir.name}
+    issues = {i.snapshot.issue_ref: i for i in ctx.items}
+    files = export_failures(run_dir.name, failures, events, issues, tagged, out_dir, limit)
+    typer.echo(f"{len(failures)} failures; {len(files)} batch file(s) in {out_dir.as_posix()}")
+
+
+@annotate_app.command("import-failures")
+def annotate_import_failures(
+    run_dir: Path,
+    file: Path,
+    annotator: AnnotatorOpt,
+    labels: str = "gold",
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Validate and store failure tags for a run."""
+    from triagelab.labeling.batches import import_failure_tags, run_failures
+    from triagelab.labeling.failure_tags import FailureTagStore
+
+    cfg = load_config(config)
+    failures, _ = run_failures(run_dir, _labels(labels))
+    store = FailureTagStore(cfg.dataset.data_dir)
+    n = import_failure_tags(
+        file, run_dir.name, {f.issue_ref: f for f in failures}, store, annotator
+    )
+    typer.echo(f"{file.name}: {n} tags stored")

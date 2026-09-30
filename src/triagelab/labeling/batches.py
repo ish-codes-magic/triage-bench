@@ -15,14 +15,25 @@ import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from triagelab.data.profile import RepoProfile
 from triagelab.eval.failure_tagger import trace_summary
-from triagelab.eval.failures import Failure
+from triagelab.eval.failures import Failure, find_failures
+from triagelab.eval.report import Labels, examples_for, load_run
+from triagelab.harness.trace_stats import load_events
 from triagelab.labeling.failure_tags import SEED_CODES, FailureTag, FailureTagStore
-from triagelab.labeling.gold import Decision, GoldRecord, GoldStore, LabelingItem
+from triagelab.labeling.gold import (
+    Decision,
+    GoldRecord,
+    GoldStore,
+    LabelingItem,
+    gold_path,
+    label_vocabulary,
+    load_items,
+)
 from triagelab.labeling.ratings import Rating, RatingItem, RatingStore, Rubric
 
 MAX_BODY_CHARS = 12_000  # what the systems see (system.max_body_chars)
@@ -391,3 +402,31 @@ def import_failure_tags(
     for tag in tags:
         store.save(tag)
     return len(tags)
+
+
+# --- Loading what the commands need -----------------------------------------------------
+
+
+class GoldContext(NamedTuple):
+    items: list[LabelingItem]
+    store: GoldStore
+    vocab: dict[str, list[str]]
+    components: list[str]
+
+
+def gold_context(data_dir: Path, profile: RepoProfile) -> GoldContext:
+    return GoldContext(
+        items=load_items(data_dir, profile),
+        store=GoldStore(gold_path(data_dir, profile)),
+        vocab=label_vocabulary(data_dir, profile),
+        components=[c.name for c in profile.components],
+    )
+
+
+def run_failures(
+    run_dir: Path, labels: Labels
+) -> tuple[list[Failure], dict[str, list[dict[str, Any]]]]:
+    """A run's failures against silver or gold, and its trace events by trace id."""
+    run_cfg, split, _ = load_run(run_dir)
+    predictions, events = load_events(run_dir)
+    return find_failures(examples_for(run_cfg, split, labels), predictions), dict(events)

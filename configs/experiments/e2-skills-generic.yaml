@@ -1,0 +1,8 @@
+# E2 (skills, H1): the repository-agnostic skill, loaded on the first call (ADR-0026,
+# iteration 4) so every variant's content is actually in context.
+extends: agent.yaml
+name: e2-skills-generic
+system:
+  agent:
+    skills: [generic-triage]
+    skill_activation: first_call

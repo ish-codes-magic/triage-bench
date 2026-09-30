@@ -1,0 +1,6 @@
+# E2 (skills, H1): no skill at all: no catalog, no skill tools.
+extends: agent.yaml
+name: e2-skills-none
+system:
+  agent:
+    skills: []

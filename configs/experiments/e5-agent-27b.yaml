@@ -1,0 +1,8 @@
+# E5 (model size): the reference agent with Qwen3.5-27B instead of 9B; nothing else changes.
+extends: agent.yaml
+name: e5-agent-27b
+llm:
+  model: openrouter/qwen/qwen3.5-27b
+  # quantization: null is explicit: base.yaml pins bf16, and Alibaba's endpoint reports
+  # "unknown" (a bf16 filter would drop it; tests/test_configs.py checks the route).
+  route: {provider: alibaba, quantization: null}

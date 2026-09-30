@@ -1,0 +1,7 @@
+# E2 (skills, H1): the hand-written CPython skill, loaded on the first call.
+extends: agent.yaml
+name: e2-skills-repo
+system:
+  agent:
+    skills: [triage-cpython]
+    skill_activation: first_call

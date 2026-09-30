@@ -783,3 +783,23 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - Cost is counted over every role, so the comparison is fair on cost.
 - The trace marks each role with a `role` event. Step numbers restart per role.
 - The synthesizer can't check a worker's claim. If E4 loses, the traces show whether the loss came from bad findings or from bad synthesis.
+
+## ADR-0039: E5 runs the 27B on Novita bf16, with "soft" forcing of the final answer
+
+**Context.**
+- E5's first run (27B on Alibaba) failed on 64 of 100 dev issues. OpenRouter answered 404: "No endpoints found that support the provided 'tool_choice' value".
+- The harness forces the final `submit_triage` call with a named `tool_choice` when a budget runs out.
+- Probes (one call each, 2026-09-30) showed the 27B refuses both a named `tool_choice` and `required` on Alibaba and on Novita. Only an unset (`auto`) `tool_choice` works. The 9B's DeepInfra route accepts named choices.
+
+**Decision.**
+- **Route:** E5 uses Novita at **bf16**, the same precision as the 9B arm. Alibaba doesn't disclose its precision, so this is a better-controlled size comparison.
+- **New capability flag:** `llm.named_tool_choice` (default true).
+  - When it's false, a forced call offers **only** the forced tool, with `tool_choice` unset. The first time, the loop adds one line: "The <limit> limit is reached. Call submit_triage now".
+  - The flag lives in `LLMConfig`, not in the request, so existing cache keys and cassettes are unchanged.
+- **Also fixed:** `tool_choice: required` was being sent as a function name; it now passes through as-is.
+- **Matching:** E5 is paired with a 9B reference run on the same harness (tools v2).
+
+**Consequences.**
+- The two E5 arms force the final answer differently: hard for 9B, soft for 27B. The count of `no_answer` after a forced call is reported, so the difference is visible.
+- The partial Alibaba run (`20260930-114257-e5-agent-27b-3eca81`) is discarded as an infrastructure failure, not a result.
+- §0's `small_model` route changes to `novita/bf16`.

@@ -35,6 +35,12 @@ models:
     source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-27b/endpoints
     verified_on: 2026-09-29
     notes: E5 size comparison (9B vs 27B). Official provider; precision not disclosed.
+  openrouter/qwen/qwen3.5-27b@novita/bf16:
+    input_per_mtok: 0.30
+    output_per_mtok: 2.40
+    source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-27b/endpoints
+    verified_on: 2026-09-30
+    notes: E5 route after ADR-0039 (Alibaba rejects a named tool_choice). bf16, like the 9B arm.
   openrouter/openai/gpt-6-luna@openai:
     input_per_mtok: 0.10
     output_per_mtok: 0.50

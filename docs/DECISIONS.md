@@ -735,3 +735,51 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - A valid needs-info task needs a different derivation. One option is maintainer comments that ask the reporter for information, before any reply. That's future work, re-checked with the same adjudication.
 
 **Consequences.** No headline claim rests on a label that doesn't mean what its name says. The T4 infrastructure (metrics, the `needs_info` field) stays for the re-derivation and for the transfer repo, whose needs-info label may be valid.
+
+## ADR-0037: The spend ledger is appended under a cross-process file lock
+
+**Context.**
+- M6 ran two evaluations in parallel for the first time.
+- Both processes appended to `runs/spend_ledger.jsonl`. On Windows, append mode is not atomic across processes, so two appends overlapped: one line lost its start, and one entry (about $0.005) was lost from the record.
+- The ledger feeds `BudgetGuard`'s total, so a corrupt line stopped every later run (`SpendLedger.entries()` refuses to guess).
+- A stress test of the old code (4 processes × 200 appends) lost 21–38% of lines.
+
+**Decision.**
+- `ledger.record` writes each entry as one binary write, while holding an exclusive lock on `<ledger>.lock` (`triagelab/filelock.py`: `msvcrt.locking` on Windows, `fcntl.flock` elsewhere).
+- No new dependency: `filelock` or `portalocker` would do the same thing in about 30 lines we can read.
+- The damaged ledger was repaired by hand:
+  - the broken fragment was removed;
+  - the lost entry was replaced with a conservative `ledger-repair` adjustment, rounded up.
+
+**Consequences.**
+- Parallel runs are safe. `tests/test_ledger_concurrency.py` runs 4 writer processes and checks that no entry is lost.
+- The budget total stays an upper bound on real spend.
+- A crashed process can't leave the lock held: OS locks are released when the file handle closes.
+
+## ADR-0038: E4's multi-agent arm is a planner, two narrow workers and a synthesizer
+
+**Context.**
+- §13 E4 asks whether a planner plus subagents is worth it over the single agent.
+- M5's taxonomy blamed most agent failures on two behaviours:
+  - thrashing: repeated or overlapping searches;
+  - ignoring evidence: the right component or duplicate was in a tool result, but the answer didn't use it.
+
+  Narrow roles are the usual multi-agent answer to both.
+- Options considered:
+  - an LLM orchestrator that spawns subagents freely, as a tool call;
+  - a fixed pipeline;
+  - a planner that chooses from fixed specialists.
+
+**Decision.**
+- **Plan:** one structured call (`Plan`) decides whether to send a *duplicate scout* (`search_similar_issues`, `get_issue`) and a *code locator* (`search_code`, `get_codeowners`, with the component map in its prompt), and gives each some search hints.
+- **Workers:** each worker runs the same hand-written loop with its own findings schema (`submit_findings`) and budget (6 steps, 4 tool calls, $0.01).
+- **Synthesize:** the synthesizer runs the reference agent's loop, prompt and skills. It has **no retrieval tools**, and it gets the findings as a delimited note, marked as evidence rather than instructions.
+- **If the plan doesn't parse:** both workers are sent, without hints.
+- Free spawning was rejected: with a 9B model it adds a failure mode (bad delegation) without isolating the question.
+- The two arms differ only in how retrieval is organised. Model, skill, vocabulary and answer schema are shared (`architecture: single | planner`).
+
+**Consequences.**
+- E4 measures one change: the same retrieval split into roles.
+- Cost is counted over every role, so the comparison is fair on cost.
+- The trace marks each role with a `role` event. Step numbers restart per role.
+- The synthesizer can't check a worker's claim. If E4 loses, the traces show whether the loss came from bad findings or from bad synthesis.

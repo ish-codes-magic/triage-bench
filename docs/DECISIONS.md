@@ -690,3 +690,28 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - **Tests:** AppTest drives each page end to end: blind then final gold, a rating, a failure tag on a replayed agent run.
 
 **Consequences.** The UI is covered by CI without a browser, and every label-handling rule is unit-tested outside Streamlit.
+
+## ADR-0035: The owner delegated labeling to a model annotator (Claude), recorded as such
+
+**Context.**
+- §7.5 planned hand labels ("gold") by the owner.
+- On 2026-09-30 the owner asked the coding agent (Claude Opus 5.5) to do the labeling instead: gold labels, comment ratings and failure tags.
+
+**Decision.**
+- **Provenance:** every record carries `annotator: claude-opus-5-5`. Reports call these **Claude-adjudicated labels**, never "human gold".
+- **What changes in meaning:**
+  - the blind-pass baseline row is a strong-LLM baseline, not a human one;
+  - judge calibration measures agreement between two model families (GPT-6 Luna vs. Claude), not human validity;
+  - silver-vs-gold κ measures disagreement between maintainer-derived labels and a careful model reviewer.
+- **Process:** unchanged and enforced by tooling (`triagelab annotate`, ADR-0031):
+  - blind batches contain only creation-time text;
+  - evidence is exported only after the blind answers are stored;
+  - rating batches use opaque ids, with no system names.
+
+  Labeling runs in isolated subagents that write answers to files.
+- **Test-split hygiene:** test issues are labeled only at M8, after all prompt, skill and threshold decisions are frozen, by isolated subagents whose content never enters the main development context. The annotator is also the developer, and reading test issues now could leak into later decisions.
+
+**Consequences.**
+- M5's numbers are available now, honestly labeled.
+- A human spot-check of about 20 issues would put a number on the reliability of the model labels. It's recommended, but optional.
+- A threat to validity is recorded: labels from an LLM may favour LLM-shaped answers, which could flatter the LLM systems relative to TF-IDF.

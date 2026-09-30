@@ -21,13 +21,10 @@ from .mcp_fixtures import PROFILE, REPO_ROOT, fixture_issues, make_intel
 
 ISSUE_3 = to_snapshot(fixture_issues()[2])  # "zipfile empty archive crash again"
 ANSWER: dict[str, Any] = {
-    "type_label": "type-bug",
-    "type_confidence": 0.9,
     "labels": [
-        {"label": "stdlib", "confidence": 0.8, "basis": "central"},
-        {"label": "area-stdlib", "confidence": 0.5, "basis": "central"},  # invented: not kept
-        {"label": "topic-asyncio", "confidence": 0.4, "basis": "incidental"},  # dropped
-        {"label": "type-crash", "confidence": 0.3, "basis": "central"},  # a 2nd type: dropped
+        {"label": "type-bug", "confidence": 0.9},
+        {"label": "stdlib", "confidence": 0.8},
+        {"label": "area-stdlib", "confidence": 0.5},  # invented: recorded, not kept
     ],
     "component": "stdlib",
     "component_top3": ["stdlib", "extension-modules", "made-up"],

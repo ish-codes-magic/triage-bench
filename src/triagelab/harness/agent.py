@@ -9,7 +9,7 @@ The label vocabulary and issue framing are the same bytes the single-shot baseli
 import json
 import time
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,7 +27,7 @@ from triagelab.prompting import UNTRUSTED_ISSUE, component_lines, issue_block, i
 from triagelab.skills.loader import SkillSet
 from triagelab.triage import TriageResult
 
-PROMPT_VERSION = "3"  # bump with any change to SYSTEM_PROMPT or the answer schema
+PROMPT_VERSION = "2"  # bump with any change to SYSTEM_PROMPT or the answer schema
 
 
 class LabelGuess(BaseModel):
@@ -35,13 +35,6 @@ class LabelGuess(BaseModel):
 
     label: str = Field(description="A label copied exactly from the allowed list.")
     confidence: float = Field(ge=0.0, le=1.0)
-    # Iteration 7: the reference agent's topic/OS labels were right only 48% of the time,
-    # mostly labels for things the issue merely mentions. The model classifies each label
-    # and the harness keeps the central ones: a rule the schema enforces, not a request.
-    basis: Literal["central", "incidental"] = Field(
-        description="central: the problem or the change is in this area, module or platform. "
-        "incidental: it is only mentioned, used in a reproducer, or the reporter's environment."
-    )
 
 
 class AgentAnswer(BaseModel):
@@ -49,12 +42,9 @@ class AgentAnswer(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Iteration 7: 10% of the reference agent's answers had no type label.
-    type_label: str = Field(description="Exactly one type label from the allowed list.")
-    type_confidence: float = Field(ge=0.0, le=1.0)
     labels: list[LabelGuess] = Field(
-        description="Area, topic and OS labels that may apply, each marked central or "
-        "incidental. Only central labels are kept."
+        description="Every allowed label that applies: one type label, plus area, topic "
+        "and OS labels that clearly apply."
     )
     component: str = Field(description="The component a fix would change, from the list.")
     # Required (iteration 3): with a default, the model omitted it on 77% of issues and
@@ -346,11 +336,7 @@ class AgentTriager:
         a = outcome.answer
         if a is None:
             return base
-        types = set(self._profile.taxonomy.type)
-        kept = [LabelGuess(label=a.type_label, confidence=a.type_confidence, basis="central")]
-        kept += [g for g in a.labels if g.basis == "central" and g.label not in types]
-        kept = [g for g in kept if g.label in self._allowed_labels]
-        offered = [a.type_label, *(g.label for g in a.labels)]
+        kept = [g for g in a.labels if g.label in self._allowed_labels]
         component = a.component if a.component in self._components else None
         # A duplicate's original must be older, and older issues have smaller numbers.
         earlier = [n for n in (a.duplicate_of, *a.duplicate_candidates) if n and n < issue.number]
@@ -359,7 +345,9 @@ class AgentTriager:
             update={
                 "labels": _dedupe([g.label for g in kept]),
                 "label_confidence": {g.label: g.confidence for g in kept},
-                "rejected_labels": _dedupe([x for x in offered if x not in self._allowed_labels]),
+                "rejected_labels": _dedupe(
+                    [g.label for g in a.labels if g.label not in self._allowed_labels]
+                ),
                 "component": component,
                 "component_confidence": a.component_confidence if component else None,
                 "component_candidates": _dedupe(

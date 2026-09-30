@@ -46,3 +46,5 @@ def test_generated_skill_passes_the_spec(tmp_path: Path) -> None:
     assert parsed.problems == ()
     assert parsed.metadata["generated"].startswith("true")
     assert parsed.resources() == ["references/component_map.md", "references/label_taxonomy.md"]
+    for f in directory.rglob("*.md"):
+        assert b"\r\n" not in f.read_bytes(), f  # committed files: LF on every OS

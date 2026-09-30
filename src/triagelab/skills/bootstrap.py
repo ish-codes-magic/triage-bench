@@ -137,10 +137,11 @@ def write_skill(skill: GeneratedSkill, directory: Path, *, sources_note: str) ->
         "---\n\n"
     )
     (directory / "references").mkdir(parents=True, exist_ok=True)
-    (directory / "SKILL.md").write_text(front + skill.body.strip() + "\n", encoding="utf-8")
-    (directory / "references" / "label_taxonomy.md").write_text(
-        skill.label_taxonomy.strip() + "\n", encoding="utf-8"
-    )
-    (directory / "references" / "component_map.md").write_text(
-        skill.component_map.strip() + "\n", encoding="utf-8"
-    )
+    # Bytes, not write_text: text mode writes CRLF on Windows, and skills are committed.
+    files = {
+        "SKILL.md": front + skill.body.strip(),
+        "references/label_taxonomy.md": skill.label_taxonomy.strip(),
+        "references/component_map.md": skill.component_map.strip(),
+    }
+    for rel, text in files.items():
+        (directory / rel).write_bytes((text + "\n").encode("utf-8"))

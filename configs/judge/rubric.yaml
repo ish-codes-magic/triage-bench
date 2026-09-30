@@ -1,0 +1,28 @@
+# Rubric for T5, the draft triage comment (AGENTS.md §12.4). DRAFT v1, for the owner's
+# review: change the wording freely; a change bumps `version`, and every judge-agreement
+# number is then re-measured. Each criterion is scored 1-4; the level descriptions are
+# shown to both the human rater and the LLM judge, so they share one scale.
+version: 1
+scale: [1, 2, 3, 4]
+criteria:
+  - name: correctness
+    question: Is everything the comment claims true, given the issue and what happened next?
+    levels:
+      1: Wrong or misleading, e.g. the wrong module, a false duplicate, or invented facts.
+      2: Partly wrong, or a key claim isn't supported by the issue.
+      3: Correct, but vague or hedged.
+      4: Correct and specific.
+  - name: actionability
+    question: Does it move the issue forward for a maintainer or the reporter?
+    levels:
+      1: No next step, or it only restates the issue.
+      2: A generic next step, e.g. "needs investigation" or "please provide more info".
+      3: A clear next step, e.g. the right area or expert, or exactly what information is missing.
+      4: A clear next step with a concrete pointer, e.g. a file or function, a duplicate number, or a command to run.
+  - name: tone
+    question: Could a maintainer post it as it is?
+    levels:
+      1: Rude or patronising, promises a fix or a date, or is far too long.
+      2: Awkward, repetitive or padded; it needs rewriting.
+      3: Fine with light edits.
+      4: Ready to post, brief, polite and neutral.

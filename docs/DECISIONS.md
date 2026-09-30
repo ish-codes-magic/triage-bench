@@ -628,3 +628,96 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - Any change to a prompt, skill, tool output or agent setting fails CI until the cassettes are re-recorded, on purpose.
 - No API key ever reaches PR workflows.
+
+## ADR-0031: Gold labels are collected blind, then adjudicated with evidence
+
+**Context.** §7.5 asks for hand labels (gold) and silver-vs-gold κ. The obvious interface shows the silver labels and asks the person to confirm or fix them. That anchors the person on silver and inflates the very agreement we want to measure.
+
+**Decision.**
+- **Two passes per issue** in the labeling app (`triagelab label`):
+  1. **Blind:** labels, component and needs-info, from the issue as it was opened. No GitHub link and no labels are shown; the body is plain text.
+  2. **Final:** the evidence is revealed (labels with who applied them, fixing PRs and their files, the duplicate closure), and the person sets the gold, starting from their *own* blind answer.
+- **Storage:** both passes, plus the blind-pass time, go to `data/gold/<repo>.jsonl`, which is committed. The latest line per issue wins.
+
+**Consequences.**
+- One labeling session yields three results:
+  - gold labels for the headline numbers;
+  - a **human baseline** (the blind pass scored like any system: `results --labels gold`);
+  - a measure of how much evidence moves a careful reader (blind vs. final κ in `gold-report`).
+- Duplicates are adjudicated, not discovered: a person can't search the tracker blind.
+
+**Correction (2026-09-30).**
+- The "human baseline" consequence was wrong.
+- When the same annotator adjudicates the gold starting from their own blind answer, the blind pass is anchored on itself. It scored 0.96 against its own gold, which is not comparable to any system.
+- The blind-vs-final agreement *does* measure how much the evidence moves the annotator, and `gold-report` reports it.
+- As a benchmark row, the blind pass is now off by default (`results --with-blind-pass`). It's only meaningful from an annotator independent of the one who adjudicated the gold.
+
+## ADR-0032: The T5 judge: GPT-6 Luna, reason-then-score, calibrated once per version
+
+**Context.** §12.4: a 3–4 criterion rubric scored 1–4, the owner's ratings split into judge-dev and judge-test, agreement reported as QWK, and bias checks.
+
+**Decision.**
+- **Rubric:** `configs/judge/rubric.yaml` (draft v1: correctness, actionability, tone). The level descriptions are shown verbatim to both the human and the judge.
+- **Judge:** GPT-6 Luna via OpenRouter, a different family from the agent (ADR-0010), with no temperature (its endpoint rejects one). It gives structured output: per criterion, reasoning, then a score.
+- **Ratings:**
+  - 100 dev issues, each with *one* comment: the system is chosen at random between the M4 agent and single-shot, and hidden from the rater.
+  - The set is frozen in `data/gold/judge_items.jsonl`.
+  - A stable hash puts each item in judge-dev or judge-test.
+- **Bias checks on judge-dev:**
+  - verbosity: append polite filler to each comment;
+  - position: reverse the criterion order.
+
+  Both report the mean score shift.
+- **Hygiene:** `JudgeTestGuard` refuses a second judge-test measurement for the same judge prompt and rubric versions.
+
+**Consequences.** The judge can be tuned freely on judge-dev and reported honestly on judge-test. Any rubric or prompt change is a new version and needs a new measurement.
+
+## ADR-0033: Failure taxonomy from open coding, then a validated LLM tagger
+
+**Context.** §12.6: open coding on about 50 failures, consolidation to 6–10 categories, and an LLM tagger validated against the person.
+
+**Decision.**
+- **Failures** are computed per issue and task against silver or gold (`eval/failures.py`), with a readable difference ("missing: stdlib; extra: docs").
+- **Open coding:** the review page shows the failure, the issue and the agent's trace. The person tags free-form codes; the §12.6 seed codes are offered, and new codes can be created.
+- **Taxonomy:** `configs/failures/taxonomy.yaml` maps categories to the open codes they absorb. It is v0 until the owner's coding is consolidated.
+- **Tagger:** the LLM tagger (same model as the judge) picks categories from the failure plus a compact trace. `failures validate` reports per-category κ, exact-set agreement and Jaccard against the person's mapped codes.
+- **Reports:** `failures tag` writes `<run>/failures.parquet`, and `runs stats` prints the category counts.
+
+**Consequences.** Category counts in reports carry a measured agreement number, not blind trust in an LLM.
+
+## ADR-0034: The labeling app is Streamlit, configured by environment, tested with AppTest
+
+**Context.** §5 names a minimal Streamlit app. Streamlit's test harness (AppTest) doesn't set `sys.argv`.
+
+**Decision.**
+- **Dependencies:** Streamlit 1.64 in a `labeling` dependency group, installed by default so CI tests it. Skip it with `--no-group labeling`.
+- **Configuration:** the app reads `TRIAGELAB_*` environment variables, and `triagelab label` sets them. Usage statistics are turned off.
+- **Structure:** logic lives in plain modules (`labeling/gold.py`, `ratings.py`, `failure_tags.py`), and each page is a thin view over them.
+- **Tests:** AppTest drives each page end to end: blind then final gold, a rating, a failure tag on a replayed agent run.
+
+**Consequences.** The UI is covered by CI without a browser, and every label-handling rule is unit-tested outside Streamlit.
+
+## ADR-0035: The owner delegated labeling to a model annotator (Claude), recorded as such
+
+**Context.**
+- §7.5 planned hand labels ("gold") by the owner.
+- On 2026-09-30 the owner asked the coding agent (Claude Opus 5.5) to do the labeling instead: gold labels, comment ratings and failure tags.
+
+**Decision.**
+- **Provenance:** every record carries `annotator: claude-opus-5-5`. Reports call these **Claude-adjudicated labels**, never "human gold".
+- **What changes in meaning:**
+  - the blind-pass baseline row is a strong-LLM baseline, not a human one;
+  - judge calibration measures agreement between two model families (GPT-6 Luna vs. Claude), not human validity;
+  - silver-vs-gold κ measures disagreement between maintainer-derived labels and a careful model reviewer.
+- **Process:** unchanged and enforced by tooling (`triagelab annotate`, ADR-0031):
+  - blind batches contain only creation-time text;
+  - evidence is exported only after the blind answers are stored;
+  - rating batches use opaque ids, with no system names.
+
+  Labeling runs in isolated subagents that write answers to files.
+- **Test-split hygiene:** test issues are labeled only at M8, after all prompt, skill and threshold decisions are frozen, by isolated subagents whose content never enters the main development context. The annotator is also the developer, and reading test issues now could leak into later decisions.
+
+**Consequences.**
+- M5's numbers are available now, honestly labeled.
+- A human spot-check of about 20 issues would put a number on the reliability of the model labels. It's recommended, but optional.
+- A threat to validity is recorded: labels from an LLM may favour LLM-shaped answers, which could flatter the LLM systems relative to TF-IDF.

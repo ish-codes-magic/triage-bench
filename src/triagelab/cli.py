@@ -8,7 +8,7 @@ is also reachable (and testable) from Python.
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 import yaml
@@ -37,10 +37,19 @@ llm_app = typer.Typer(help="Talk to models through the cached, budgeted client."
 data_app = typer.Typer(help="Collect and prepare datasets.", no_args_is_help=True)
 retrieval_app = typer.Typer(help="Build and evaluate the retrieval index.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=True)
+judge_app = typer.Typer(help="Sample and calibrate the T5 comment judge.", no_args_is_help=True)
+failures_app = typer.Typer(help="Tag failures and validate the tagger.", no_args_is_help=True)
+annotate_app = typer.Typer(
+    help="Export annotation batches as files and import the answers (ADR-0035).",
+    no_args_is_help=True,
+)
 app.add_typer(config_app, name="config")
 app.add_typer(data_app, name="data")
 app.add_typer(retrieval_app, name="retrieval")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(judge_app, name="judge")
+app.add_typer(failures_app, name="failures")
+app.add_typer(annotate_app, name="annotate")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
 
@@ -284,11 +293,14 @@ def compare(
     exclude_errors: Annotated[
         bool, typer.Option("--exclude-errors", help="Skip issues where either run fell back.")
     ] = False,
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "silver",
 ) -> None:
     """Paired-bootstrap comparison of two runs (B - A) on the issues both predicted."""
     from triagelab.eval.report import compare_runs, render_comparison
 
-    rows = compare_runs(run_a, run_b, exclude_errors=exclude_errors)
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    rows = compare_runs(run_a, run_b, exclude_errors=exclude_errors, labels=labels)
     typer.echo(render_comparison(rows, run_a.name, run_b.name))
 
 
@@ -297,15 +309,29 @@ def results(
     split: str = "dev",
     config: ConfigOpt = DEFAULT_CONFIG,
     out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/results"),
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "silver",
+    with_blind_pass: Annotated[
+        bool, typer.Option(help="Add the annotators' blind pass (only if independent of the gold).")
+    ] = False,
 ) -> None:
     """Write the results table (latest run per experiment) to reports/results/<split>.md."""
-    from triagelab.eval.report import load_scored_runs, results_table
+    from triagelab.data.splits import parse_split
+    from triagelab.eval.report import load_scored_runs, rescore_on_gold, results_table
 
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
-    table = results_table(load_scored_runs(cfg.paths.runs_dir), split)
+    runs = load_scored_runs(cfg.paths.runs_dir)
+    if labels == "gold":
+        runs = rescore_on_gold(
+            runs, cfg.paths.runs_dir, cfg, parse_split(split), include_blind_pass=with_blind_pass
+        )
+    table = results_table(runs, split)
+    if labels == "gold":
+        table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{split}.md"
-    heading = f"# Results: {split} split"
+    out = out_dir / (f"{split}.md" if labels == "silver" else f"{split}-gold.md")
+    heading = f"# Results: {split} split ({labels} labels)"
     out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
     typer.echo(table)
     typer.echo(f"written to {out.as_posix()}")
@@ -410,3 +436,406 @@ def mcp_serve(
     serve(
         ["--profile", str(profile), "--data-dir", str(data_dir), *([] if dense else ["--no-dense"])]
     )
+
+
+@app.command()
+def label(
+    profile: ProfileOpt = Path("configs/repos/python__cpython.yaml"),
+    data_dir: DataDirOpt = Path("data"),
+    annotator: Annotated[str, typer.Option(help="Recorded with every label.")] = "owner",
+    port: Annotated[int, typer.Option(help="Local port for the app.")] = 8501,
+) -> None:
+    """Open the labeling app in the browser (gold labels, blind first; see M5)."""
+    import subprocess
+    import sys
+
+    from triagelab import labeling
+
+    app_path = Path(labeling.__file__).parent / "app.py"
+    env = {
+        **os.environ,
+        "TRIAGELAB_PROFILE": str(profile.resolve()),
+        "TRIAGELAB_DATA_DIR": str(data_dir.resolve()),
+        "TRIAGELAB_ANNOTATOR": annotator,
+    }
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(app_path),
+        "--server.port", str(port),
+        "--browser.gatherUsageStats", "false",  # Streamlit sends usage stats unless told not to
+    ]  # fmt: skip
+    raise typer.Exit(subprocess.run(command, env=env, check=False).returncode)
+
+
+@judge_app.command("sample")
+def judge_sample(
+    runs: Annotated[
+        list[str], typer.Argument(help="NAME=RUN_DIR pairs whose triage comments are rated.")
+    ],
+    data_dir: DataDirOpt = Path("data"),
+    seed: int = 0,
+) -> None:
+    """Freeze the set of comments to rate (one per dev issue, system chosen at random)."""
+    from triagelab.labeling.ratings import RatingStore, sample_items
+
+    pairs = dict(r.split("=", 1) for r in runs)
+    items = sample_items({name: Path(path) for name, path in pairs.items()}, seed=seed)
+    store = RatingStore(data_dir)
+    store.write_items(items)
+    typer.echo(f"{len(items)} comments to rate written to {store.items_file.as_posix()}")
+
+
+@judge_app.command("calibrate")
+def judge_calibrate(
+    split: Annotated[
+        str, typer.Option(help="judge-dev (iterate), judge-test (once)")
+    ] = "judge-dev",
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    bias: Annotated[bool, typer.Option(help="Also run the verbosity/order checks.")] = True,
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/judge"),
+) -> None:
+    """Judge the human-rated comments and report agreement (QWK, exact, adjacent)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.judge import (
+        Judge,
+        JudgeTestGuard,
+        agreement,
+        bias_shift,
+        items_in,
+        render_agreement,
+        save_scores,
+    )
+    from triagelab.labeling.gold import load_items
+    from triagelab.labeling.ratings import RatingStore, load_rubric
+
+    if split not in ("judge-dev", "judge-test"):
+        raise typer.BadParameter("split must be judge-dev or judge-test")
+    load_dotenv()
+    cfg = load_config(config)
+    rubric = load_rubric(rubric_path)
+    profile = load_profile(cfg.dataset.profile)
+    store = RatingStore(cfg.dataset.data_dir)
+    guard = JudgeTestGuard(cfg.dataset.data_dir / "gold" / "judge_test_log.jsonl")
+    if split == "judge-test":
+        guard.authorize(rubric.version)
+    ratings = store.ratings()
+    rated = [i for i in items_in(split, store.items()) if i.item_id in ratings]
+    if not rated:
+        typer.echo(f"No human ratings in {split} yet: rate comments in `triagelab label` first.")
+        raise typer.Exit(1)
+    issues = {i.snapshot.issue_ref: i for i in load_items(cfg.dataset.data_dir, profile)}
+    pairs = [(i, issues[i.issue_ref]) for i in rated]
+    run_dir, _ = create_run(
+        cfg, runs_dir=cfg.paths.runs_dir, command=f"judge calibrate --split {split}",
+        now=datetime.now(UTC), git=git_info(Path.cwd()), details={"split": split},
+    )  # fmt: skip
+    client = wiring.build_llm_client(cfg, run_id=run_dir.name)
+    judge = Judge(client, cfg.llm, rubric, profile.repo)
+    plain = judge.score_all(pairs, workers=cfg.eval.concurrency, log=typer.echo)
+    save_scores(run_dir / "judge_scores.jsonl", plain)
+    table = render_agreement(agreement(ratings, plain, rubric), split)
+    lines = [f"# Judge agreement: {split}", "", table]
+    if bias and split == "judge-dev":
+        for variant in ("padded", "reversed"):
+            other = judge.score_all(
+                pairs, variant=variant, workers=cfg.eval.concurrency, log=typer.echo
+            )
+            save_scores(run_dir / f"judge_scores_{variant}.jsonl", other)
+            shift = ", ".join(f"{k} {v:+.2f}" for k, v in bias_shift(plain, other).items())
+            lines += ["", f"- **{variant}** mean score shift: {shift}"]
+    write_cost(run_dir, client.stats)
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    typer.echo(f"cost ${client.stats.cost_usd:.4f}")
+    if split == "judge-test":
+        guard.record(rubric.version)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))
+
+
+@app.command("gold-report")
+def gold_report(
+    split: str = "dev",
+    config: ConfigOpt = DEFAULT_CONFIG,
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/gold"),
+) -> None:
+    """Label noise (silver vs gold kappa), what the evidence changed, and labeling time."""
+    from statistics import median
+
+    from triagelab.data.profile import load_profile
+    from triagelab.data.splits import parse_split
+    from triagelab.eval.dataset import load_split
+    from triagelab.eval.gold_labels import agreement_by_task, gold_from, render_agreement, usable
+    from triagelab.labeling.gold import GoldStore, gold_path, label_vocabulary
+
+    cfg = load_config(config)
+    profile = load_profile(cfg.dataset.profile)
+    data_dir = cfg.dataset.data_dir
+    records = usable(GoldStore(gold_path(data_dir, profile)).load())
+    silver = {
+        e.snapshot.issue_ref: e.gold for e in load_split(data_dir, profile, parse_split(split))
+    }
+    done = [r for ref, r in records.items() if ref in silver and r.final is not None]
+    if not done:
+        typer.echo(f"No adjudicated {split} issues yet: label them with `triagelab label`.")
+        raise typer.Exit(1)
+    vocab = [label for group in label_vocabulary(data_dir, profile).values() for label in group]
+    finals = [gold_from(r.final, profile) for r in done if r.final is not None]
+    blinds = [gold_from(r.blind, profile) for r in done]
+    sections = [
+        f"# Gold labels: {split} ({len(done)} issues adjudicated)",
+        "## Label noise: silver vs gold",
+        render_agreement(
+            agreement_by_task(
+                [(silver[r.issue_ref], g) for r, g in zip(done, finals, strict=True)], vocab
+            ),
+            "task",
+        ),
+        "## What the evidence changed: blind vs final (same person)",
+        render_agreement(agreement_by_task(list(zip(blinds, finals, strict=True)), vocab), "task"),
+    ]
+    seconds = [r.blind_seconds for r in done if r.blind_seconds > 0]
+    if seconds:  # a model annotator records no labeling time
+        sections.append(f"Median blind-pass time: {median(seconds):.0f} s per issue.")
+    text = "\n\n".join(sections) + "\n"
+    typer.echo(text)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))
+
+
+@failures_app.command("tag")
+def failures_tag(
+    run_dir: Annotated[Path, typer.Argument(help="An agent run folder.")],
+    labels: Annotated[str, typer.Option(help="silver | gold")] = "silver",
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    taxonomy_path: Annotated[Path, typer.Option("--taxonomy")] = Path(
+        "configs/failures/taxonomy.yaml"
+    ),
+) -> None:
+    """Tag every failure of a run with the LLM tagger; writes <run>/failures.parquet."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from triagelab.eval.failure_tagger import (
+        FailureTagger,
+        TaggedFailure,
+        load_taxonomy,
+        write_failures,
+    )
+    from triagelab.eval.failures import Failure, find_failures
+    from triagelab.eval.report import examples_for, load_run
+    from triagelab.harness.trace_stats import load_events
+
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    load_dotenv()
+    cfg = load_config(config)
+    taxonomy = load_taxonomy(taxonomy_path)
+    run_cfg, split, _ = load_run(run_dir)
+    predictions, events = load_events(run_dir)
+    examples = examples_for(run_cfg, split, labels)
+    titles = {e.snapshot.issue_ref: e.snapshot.title for e in examples}
+    failures = find_failures(examples, predictions)
+    client = wiring.build_llm_client(cfg, run_id=f"{run_dir.name}-failures")
+    tagger = FailureTagger(client, cfg.llm, taxonomy)
+
+    def one(failure: Failure) -> TaggedFailure:
+        return tagger.tag(failure, events.get(failure.trace_id, []), titles[failure.issue_ref])
+
+    with ThreadPoolExecutor(max_workers=cfg.eval.concurrency) as pool:
+        tagged = list(pool.map(one, failures))
+    write_failures(run_dir, tagged, taxonomy.version)
+    typer.echo(f"{len(tagged)} failures tagged; cost ${client.stats.cost_usd:.4f}")
+
+
+@failures_app.command("validate")
+def failures_validate(
+    run_dir: Annotated[Path, typer.Argument(help="A run tagged by both the person and the LLM.")],
+    config: ConfigOpt = DEFAULT_CONFIG,
+    taxonomy_path: Annotated[Path, typer.Option("--taxonomy")] = Path(
+        "configs/failures/taxonomy.yaml"
+    ),
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/failures"),
+) -> None:
+    """Agreement between the reference failure tags and the LLM tagger's, per category."""
+    from triagelab.data.storage import read_parquet
+    from triagelab.eval.failure_tagger import (
+        FAILURES_FILE,
+        human_categories,
+        load_taxonomy,
+        tag_agreement,
+    )
+    from triagelab.labeling.failure_tags import FailureTagStore
+
+    cfg = load_config(config)
+    taxonomy = load_taxonomy(taxonomy_path)
+    tags = FailureTagStore(cfg.dataset.data_dir).load()
+    human = {
+        ref: human_categories(tag, taxonomy)
+        for (run_id, ref), tag in tags.items()
+        if run_id == run_dir.name
+    }
+    llm = {r["issue_ref"]: set(r["categories"]) for r in read_parquet(run_dir / FAILURES_FILE)}
+    rows, exact, jaccard = tag_agreement(human, llm, taxonomy.names())
+    annotators = ", ".join(
+        sorted({t.annotator for (run, _), t in tags.items() if run == run_dir.name})
+    )
+    lines = [
+        f"# Failure tagger validation: {run_dir.name}",
+        "",
+        f"Taxonomy v{taxonomy.version}; reference tags by {annotators}; "
+        f"{rows[0].n if rows else 0} failures tagged by both. Exact category-set agreement "
+        f"{exact:.2f}, mean Jaccard {jaccard:.2f}. A category counts as validated at kappa >= 0.6.",
+        "",
+        "| category | reference | tagger | kappa | validated |",
+        "|---|---|---|---|---|",
+    ]
+    for r in rows:
+        kappa = "n/a" if r.kappa is None else f"{r.kappa:.2f}"
+        ok = "yes" if r.kappa is not None and r.kappa >= 0.6 else "no"
+        lines.append(f"| {r.category} | {r.human} | {r.llm} | {kappa} | {ok} |")
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    out = out_dir / f"{run_dir.name}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(text.encode("utf-8"))
+
+
+AnnotatorOpt = Annotated[str, typer.Option(help="Recorded with every answer: a person or a model.")]
+
+
+def _labels(labels: str) -> Literal["silver", "gold"]:
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    return "gold" if labels == "gold" else "silver"
+
+
+@annotate_app.command("export-gold")
+def annotate_export_gold(
+    out_dir: Annotated[Path, typer.Option("--out")],
+    pass_: Annotated[str, typer.Option("--pass", help="blind | final")] = "blind",
+    split: str = "dev",
+    batch_size: int = 20,
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Write gold-label batches; final-pass evidence only for blind-labeled issues."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import export_gold_blind, export_gold_final, gold_context
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    chosen = [i for i in ctx.items if i.split == split]
+    if pass_ == "blind":
+        files = export_gold_blind(
+            chosen, ctx.store.load(), ctx.vocab, ctx.components, out_dir, batch_size
+        )
+    elif pass_ == "final":
+        files = export_gold_final(chosen, ctx.store.load(), out_dir, batch_size)
+    else:
+        raise typer.BadParameter("--pass must be blind or final")
+    typer.echo(f"{len(files)} batch file(s) in {out_dir.as_posix()}")
+
+
+@annotate_app.command("import-gold")
+def annotate_import_gold(
+    files: Annotated[list[Path], typer.Argument(help="JSONL answer files.")],
+    annotator: AnnotatorOpt,
+    pass_: Annotated[str, typer.Option("--pass", help="blind | final")] = "blind",
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Validate and store gold-label answers (a bad file stores nothing)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import gold_context, import_gold_blind, import_gold_final
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    by_ref = {i.snapshot.issue_ref: i for i in ctx.items}
+    for path in files:
+        if pass_ == "blind":
+            n = import_gold_blind(path, ctx.store, by_ref, ctx.vocab, ctx.components, annotator)
+        else:
+            n = import_gold_final(path, ctx.store, ctx.vocab, ctx.components)
+        typer.echo(f"{path.name}: {n} {pass_} answers stored")
+
+
+@annotate_app.command("export-ratings")
+def annotate_export_ratings(
+    out_dir: Annotated[Path, typer.Option("--out")],
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    batch_size: int = 25,
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Write comment-rating batches (opaque ids; keys go to <out>-keys/)."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import export_ratings, gold_context
+    from triagelab.labeling.ratings import RatingStore, load_rubric
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    store = RatingStore(cfg.dataset.data_dir)
+    issues = {i.snapshot.issue_ref: i for i in ctx.items}
+    files = export_ratings(
+        store.items(), issues, load_rubric(rubric_path), set(store.ratings()), out_dir, batch_size
+    )
+    typer.echo(f"{len(files)} batch file(s) in {out_dir.as_posix()}")
+
+
+@annotate_app.command("import-ratings")
+def annotate_import_ratings(
+    file: Path,
+    key: Annotated[Path, typer.Option(help="The batch's .key.json file.")],
+    annotator: AnnotatorOpt,
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Validate and store comment ratings."""
+    from triagelab.labeling.batches import import_ratings
+    from triagelab.labeling.ratings import RatingStore, load_rubric
+
+    cfg = load_config(config)
+    store = RatingStore(cfg.dataset.data_dir)
+    n = import_ratings(file, key, store, load_rubric(rubric_path), annotator)
+    typer.echo(f"{file.name}: {n} ratings stored")
+
+
+@annotate_app.command("export-failures")
+def annotate_export_failures(
+    run_dir: Path,
+    out_dir: Annotated[Path, typer.Option("--out")],
+    labels: str = "gold",
+    limit: int = 50,
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Write failure-review batches: the diff, the issue and the agent's steps."""
+    from triagelab.data.profile import load_profile
+    from triagelab.labeling.batches import export_failures, gold_context, run_failures
+    from triagelab.labeling.failure_tags import FailureTagStore
+
+    cfg = load_config(config)
+    ctx = gold_context(cfg.dataset.data_dir, load_profile(cfg.dataset.profile))
+    failures, events = run_failures(run_dir, _labels(labels))
+    tags = FailureTagStore(cfg.dataset.data_dir).load()
+    tagged = {ref for (run, ref) in tags if run == run_dir.name}
+    issues = {i.snapshot.issue_ref: i for i in ctx.items}
+    files = export_failures(run_dir.name, failures, events, issues, tagged, out_dir, limit)
+    typer.echo(f"{len(failures)} failures; {len(files)} batch file(s) in {out_dir.as_posix()}")
+
+
+@annotate_app.command("import-failures")
+def annotate_import_failures(
+    run_dir: Path,
+    file: Path,
+    annotator: AnnotatorOpt,
+    labels: str = "gold",
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Validate and store failure tags for a run."""
+    from triagelab.labeling.batches import import_failure_tags, run_failures
+    from triagelab.labeling.failure_tags import FailureTagStore
+
+    cfg = load_config(config)
+    failures, _ = run_failures(run_dir, _labels(labels))
+    store = FailureTagStore(cfg.dataset.data_dir)
+    n = import_failure_tags(
+        file, run_dir.name, {f.issue_ref: f for f in failures}, store, annotator
+    )
+    typer.echo(f"{file.name}: {n} tags stored")

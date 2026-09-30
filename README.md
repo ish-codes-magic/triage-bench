@@ -118,6 +118,52 @@ Our own agent loop over the `repo-intel` MCP server, with the CPython Agent Skil
 
 Agent behaviour: [v1](reports/agent/dev-agent-v1.md) and [after iteration 5](reports/agent/dev-agent-iter5.md) (`triagelab runs stats`). Traces: JSONL per run, plus OpenTelemetry spans viewable in Arize Phoenix.
 
+## Measuring the measurement (M5): label noise, adjudicated labels, a calibrated judge
+
+**Provenance first.** At the owner's request, the adjudicated ("gold") labels and the comment ratings in this section were made by a **model annotator** (Claude Opus 5.5), not a person. Every record says so (ADR-0035).
+
+The process was the one designed for a human:
+- a blind pass from exactly what the systems see;
+- then adjudication with the evidence (who applied which label, the fixing PRs' files, duplicate closures).
+
+**Label noise, silver vs. adjudicated, dev (97 usable issues):**
+
+| task | κ | finding |
+|---|---|---|
+| type label | 0.72 | Maintainers often label demonstrated segfaults as `type-bug`. |
+| component | 0.90 | The derived component sometimes follows side files (`configure`, generated headers). |
+| duplicates | 1.00 | Every maintainer duplicate closure held up. |
+| **needs-info** | **0.00** | Silver (from the `pending` label) flags 15 issues; adjudication flags **none**. `pending` means "awaiting a decision", so **T4 as derived doesn't measure missing information**. |
+
+**Results re-scored on the adjudicated labels** (free, from stored predictions: `triagelab results --labels gold`):
+
+| system | labels micro-F1 | duplicate link-F1 | component acc. |
+|---|---|---|---|
+| TF-IDF classifier | 0.72 [0.67, 0.77] | 0.11 [0.00, 0.36] | 0.72 [0.62, 0.81] |
+| single-shot LLM, thinking | 0.70 [0.65, 0.74] | 0.00 | 0.76 [0.67, 0.84] |
+| **agent** | **0.75 [0.71, 0.80]** | **0.45 [0.14, 0.70]** | 0.80 [0.72, 0.88] |
+
+- **Cleaner labels change conclusions** (paired bootstrap):
+  - On type labels the agent now **beats TF-IDF, +0.11 [+0.03, +0.19]**, where silver showed no evidence. A plausible reading: TF-IDF learns the maintainers' labeling habits.
+  - The agent's component lead over TF-IDF shrinks to no evidence (+0.08 [−0.02, +0.19]).
+  - The agent now beats the single-shot LLM on labels (+0.05 [+0.01, +0.10]).
+- **Caveat:** labels adjudicated by an LLM may favour LLM-shaped answers. A human spot-check would bound this.
+
+**T5 comment judge** (GPT-6 Luna) against the rater:
+- The prompt was tuned once on judge-dev, then measured **once** on judge-test (n = 46).
+- Correctness QWK **0.57** and actionability QWK **0.50**, with over 90% of scores within one point.
+- **Tone is not validated:** QWK 0.17, because the judge scores tone about 0.7 higher.
+- Padding a comment with polite filler *lowers* its tone score, so there's no verbosity bias.
+
+**Why the agent fails** (failure taxonomy v1: 60 failures open-coded into 20 codes, merged into 10 categories; → [docs/FAILURE_TAXONOMY.md](docs/FAILURE_TAXONOMY.md)):
+- **Mostly label judgement, not retrieval:**
+  - topic/OS labels added for a mere mention (28);
+  - the wrong half of a module, or the symptom's location instead of the fix's (24);
+  - crash vs. bug (17).
+- **Retrieval causes only 9.**
+- **The rules that prevent these errors are in the repository skill,** which the 9B model neither loads nor follows.
+- **An LLM tagger reproduces 6 of the 10 categories at κ ≥ 0.6**, and its counts appear in every run report. The other four are marked unvalidated.
+
 ## The dataset: CPython issues, exactly as they were opened
 
 5,476 [python/cpython](https://github.com/python/cpython) issues (May 2025 – Aug 2026), with silver ground truth for all four tasks. See the [dataset card](data/DATASET_CARD.md) and the [generated report](reports/data/python__cpython.md).
@@ -163,6 +209,11 @@ Agent behaviour: [v1](reports/agent/dev-agent-v1.md) and [after iteration 5](rep
   - A synchronous MCP client (anyio blocking portal) talks to `repo-intel` as a real stdio subprocess.
   - Agent Skills with progressive disclosure, held to the open spec by tests.
   - Every model and tool call is traced to JSONL and to OpenTelemetry spans (OpenInference attributes, viewable in Phoenix).
+- **Human evaluation, instrumented.**
+  - A Streamlit labeling app (tested end to end with Streamlit's AppTest) collects gold labels in two passes: first **blind**, from exactly what the systems see, then **adjudicated** against the evidence. Blind-vs-final agreement measures how much the evidence moves the annotator. → [ADR-0031](docs/DECISIONS.md#adr-0031-gold-labels-are-collected-blind-then-adjudicated-with-evidence)
+  - The same tasks run from files (`triagelab annotate`), with validated imports and an annotator recorded on every label. That's how the model annotator worked. → [ADR-0035](docs/DECISIONS.md#adr-0035-the-owner-delegated-labeling-to-a-model-annotator-claude-recorded-as-such)
+  - An LLM judge for triage comments is calibrated against human ratings with quadratic-weighted κ. It also gets verbosity and position bias checks, and a guard that allows one judge-test measurement per frozen judge version.
+  - Failures are open-coded into a taxonomy, and an LLM tagger is validated against the human tags before its counts appear in run reports. Guidelines: [docs/LABELING_GUIDE.md](docs/LABELING_GUIDE.md).
 - **Jobs that survive being killed.**
   - The 12k-issue embedding build is resumable and keyed by issue number, with atomic chunk writes.
   - It was stopped twice under memory pressure and finished without redoing work.
@@ -185,7 +236,7 @@ Agent behaviour: [v1](reports/agent/dev-agent-v1.md) and [after iteration 5](rep
 - [x] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
 - [x] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
 - [x] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
-- [ ] **M5 Gold labels, judge, failure taxonomy**
+- [x] **M5 Gold labels, judge, failure taxonomy** (labels by a model annotator, ADR-0035)
 - [ ] **M6 Iteration loop + LLM regression gate in CI**
 - [ ] **M7 Decision layer:** Jev, LLM and classifier backends, calibration, cascade
 - [ ] **M8 Transfer repo + one-time test-set evaluation**

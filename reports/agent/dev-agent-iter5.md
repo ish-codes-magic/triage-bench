@@ -9,6 +9,18 @@
 - **Tokens per issue:** 61,407 in, 2,052 out (1,445 reasoning)
 - **Cost per issue:** $0.00645; latency p50 99 s, p95 260 s
 
+| failure category | failures |
+|---|---|
+| topic/OS over-labeling | 42 |
+| code-location confusion | 31 |
+| type-label error | 20 |
+| correct evidence ignored | 14 |
+| search process failure | 13 |
+| duplicate retrieval error | 13 |
+| needs-info over-flagging | 6 |
+| repository guidance unused | 2 |
+| hallucinated file or label | 1 |
+
 | tool | calls | per issue | issues using it | errors |
 |---|---|---|---|---|
 | get_codeowners | 9 | 0.09 | 8 | 0 |

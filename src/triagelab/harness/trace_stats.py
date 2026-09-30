@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from triagelab.data.storage import read_jsonl
+from triagelab.eval.failure_tagger import category_counts
 from triagelab.eval.metrics import percentile
 from triagelab.triage import TriageResult
 
@@ -42,6 +43,8 @@ class AgentStats(BaseModel):
     cost_per_issue: float
     latency_p50_s: float
     latency_p95_s: float
+    # Failure categories from `triagelab failures tag` (None until the run is tagged).
+    failure_categories: dict[str, int] | None = None
 
 
 def load_events(run_dir: Path) -> tuple[list[TriageResult], dict[str, list[dict[str, Any]]]]:
@@ -104,6 +107,9 @@ def agent_stats(run_dir: Path) -> AgentStats:
         cost_per_issue=sum(p.cost_usd for p in predictions) / n,
         latency_p50_s=percentile(latencies, 50) if latencies else 0.0,
         latency_p95_s=percentile(latencies, 95) if latencies else 0.0,
+        failure_categories=dict(counts.most_common())
+        if (counts := category_counts(run_dir))
+        else None,
     )
 
 
@@ -128,6 +134,14 @@ def render(stats: AgentStats, run_id: str) -> str:
         f"({stats.reasoning_tokens_mean:,.0f} reasoning)\n"
         f"- **Cost per issue:** ${stats.cost_per_issue:.5f}; "
         f"latency p50 {stats.latency_p50_s:.0f} s, p95 {stats.latency_p95_s:.0f} s\n\n"
+        f"{_failure_section(stats)}"
         "| tool | calls | per issue | issues using it | errors |\n|---|---|---|---|---|\n"
         f"{tool_rows}\n"
     )
+
+
+def _failure_section(stats: AgentStats) -> str:
+    if not stats.failure_categories:
+        return ""
+    rows = "".join(f"| {name} | {n} |\n" for name, n in stats.failure_categories.items())
+    return f"| failure category | failures |\n|---|---|\n{rows}\n"

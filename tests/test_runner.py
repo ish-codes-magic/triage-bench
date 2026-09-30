@@ -12,8 +12,10 @@ from triagelab.data.collect import raw_paths
 from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split
 from triagelab.data.storage import append_jsonl, read_jsonl
-from triagelab.eval.report import compare_runs, load_scored_runs, results_table
+from triagelab.eval.dataset import load_split
+from triagelab.eval.report import compare_runs, load_scored_runs, rescore_on_gold, results_table
 from triagelab.eval.runner import RunOutcome, TestSetLockedError, run_eval
+from triagelab.labeling.gold import Decision, GoldRecord, GoldStore, gold_path
 from triagelab.llm_client import LLMClient
 from triagelab.triage import TriageResult
 
@@ -186,3 +188,32 @@ def test_infrastructure_failures_are_retried_not_scored(
     assert outcome.scorecard.system.errors == 0  # the retry pass recovered both issues
     lines = read_jsonl(outcome.run_dir / "predictions.jsonl", TriageResult)
     assert sum((p.error or "").startswith("infra: ") for p in lines) == 2  # history kept
+
+
+def test_runs_rescore_on_gold_with_a_human_baseline_row(workspace: Path) -> None:
+    cfg = _config(workspace, "majority", name="e-a")
+    _run(cfg)
+    profile = load_profile(PROFILE_PATH)
+    dev = load_split(workspace / "data", profile, "dev")
+    store = GoldStore(gold_path(workspace / "data", profile))
+    decision = Decision(labels=["type-bug"], component="stdlib")
+    for e in dev[:2]:
+        store.save(
+            GoldRecord(
+                issue_ref=e.snapshot.issue_ref, number=e.snapshot.number, split="dev",
+                blind=decision, final=decision, annotator="t", blind_seconds=20.0,
+                updated_at=FIXED_NOW,
+            )
+        )  # fmt: skip
+    scored = load_scored_runs(workspace / "runs")
+    assert {r.name for r in rescore_on_gold(scored, workspace / "runs", cfg, "dev")} == {"e-a"}
+    runs = rescore_on_gold(scored, workspace / "runs", cfg, "dev", include_blind_pass=True)
+    by_name = {r.name: r for r in runs}
+    assert set(by_name) == {"e-a", "t, blind"}  # named after the annotator
+    assert by_name["e-a"].stats.issues == 2  # only the adjudicated issues
+    assert by_name["t, blind"].metrics["t3_accuracy"].point == 1.0
+    gold_rows = compare_runs(
+        workspace / "runs" / runs[0].run_id, workspace / "runs" / runs[0].run_id, labels="gold",
+        resamples=50,
+    )  # fmt: skip
+    assert all(r.delta in (0.0, None) for r in gold_rows)

@@ -227,6 +227,8 @@ runs/
 # Datasets are large and re-derivable; only the card and tiny fixtures are committed
 data/*
 !data/DATASET_CARD.md
+# Gold labels are hand-made and not re-derivable: committed (M5)
+!data/gold/
 # Local LLM response cache (the .cache/ rule above covers it; listed here for clarity)
 .cache/
 

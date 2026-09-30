@@ -59,10 +59,26 @@ The agent input is exactly: `issue_ref`, `repo`, `number`, `title`, `body`, `aut
 | **T3 component** | The fixing PRs are merged into `main` and either GitHub-linked or titled `gh-<issue>:`; backports are excluded. Changed files are mapped with the maintainers' own area-label descriptions (e.g. `Modules/` → extension-modules; `Objects/ Python/ Grammar/ Parser/ Include/` → interpreter-core). The majority over primary components wins. `tests` and `docs` only decide when nothing else changed. Ties are skipped. `Misc/NEWS.d` is ignored. | votes per component, fix PR numbers |
 | **T4 needs-info** | A human applied `pending` ("will be closed if no feedback is provided") at any point, even if it was later removed. | first time applied |
 
-**Silver vs. gold:**
-- The owner hand-labels all 100 dev and 50 test issues ("gold", M5).
-- Silver–gold agreement (Cohen's κ per task) is itself reported.
-- Headline numbers use gold.
+**Silver vs. gold (M5):**
+- **Who labeled.** At the owner's request, the "gold" labels were produced by a **model annotator** (Claude Opus 5.5, `annotator: claude-opus-5-5`), not a person (ADR-0035).
+- **How.** Each issue got two passes: blind from the creation-time text, then adjudicated with the evidence (labels and who applied them, the fixing PRs' files, the duplicate closure).
+- **Coverage so far.** 100 dev issues; 3 were marked unusable (spam or non-issues). The 50 test issues will be labeled at M8, after all development decisions are frozen.
+- **Label noise, silver vs. gold on dev** (`reports/gold/dev.md`):
+
+  | task | Cohen's κ | agreement |
+  |---|---|---|
+  | T1 type label | 0.72 | 81% |
+  | T1 all labels, pooled per label | 0.84 | 98% |
+  | T2 is-a-duplicate | 1.00 | 100% |
+  | T3 component | 0.90 | 93% |
+  | T4 needs-info | 0.00 | 85% |
+
+- **T4 doesn't survive adjudication.** Silver marks 15 of the 97 usable dev issues as needing information, because a human applied `pending`. The adjudicated gold marks **none**: the annotator judged every one of those reports already actionable, with `pending` meaning "awaiting a maintainer decision" or "closing unless someone objects". Silver T4 metrics should be read as "predicts `pending`", not "detects missing information".
+- **Systematic silver errors the annotator reported:**
+  - demonstrated segfaults and aborts labeled `type-bug`;
+  - `extension-modules` applied to fixes in pure-Python `Lib/` code;
+  - derived components pulled toward side files (`configure`, generated headers, docstring-only edits).
+- Headline numbers use the adjudicated labels (`--labels gold`), with this provenance stated.
 
 ## Known limitations
 

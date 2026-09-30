@@ -4,8 +4,9 @@ AGENTS.md §16: every reported number is regenerated from runs/, never typed by 
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel
@@ -15,10 +16,14 @@ from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split, parse_split
 from triagelab.data.storage import read_jsonl
 from triagelab.eval.bootstrap import paired_bootstrap
-from triagelab.eval.dataset import load_split
+from triagelab.eval.dataset import EvalExample, load_split
+from triagelab.eval.gold_labels import human_predictions, with_gold
 from triagelab.eval.registry import RunManifest
-from triagelab.eval.score import METRICS, MetricScore, SystemStats, align, statistic
+from triagelab.eval.score import METRICS, MetricScore, SystemStats, align, score, statistic
+from triagelab.labeling.gold import GoldStore, gold_path
 from triagelab.triage import TriageResult
+
+Labels = Literal["silver", "gold"]
 
 HEADLINE = (
     "t1_micro_f1",
@@ -118,7 +123,7 @@ class DeltaRow(BaseModel):
     significant: bool
 
 
-def _load_run(run_dir: Path) -> tuple[Config, Split, list[TriageResult]]:
+def load_run(run_dir: Path) -> tuple[Config, Split, list[TriageResult]]:
     cfg = Config.model_validate(
         yaml.safe_load((run_dir / "config.yaml").read_text(encoding="utf-8"))
     )
@@ -129,6 +134,16 @@ def _load_run(run_dir: Path) -> tuple[Config, Split, list[TriageResult]]:
     return cfg, split, read_jsonl(run_dir / "predictions.jsonl", TriageResult)
 
 
+def examples_for(cfg: Config, split: Split, labels: Labels) -> list[EvalExample]:
+    """The split's examples, answered by silver labels or (adjudicated issues only) gold."""
+    profile = load_profile(cfg.dataset.profile)
+    examples = load_split(cfg.dataset.data_dir, profile, split)
+    if labels == "gold":
+        records = GoldStore(gold_path(cfg.dataset.data_dir, profile)).load()
+        examples = with_gold(examples, records, profile)
+    return examples
+
+
 def compare_runs(
     run_a: Path,
     run_b: Path,
@@ -136,17 +151,18 @@ def compare_runs(
     resamples: int = 1000,
     seed: int = 0,
     exclude_errors: bool = False,
+    labels: Labels = "silver",
 ) -> list[DeltaRow]:
     """B minus A on the issues both runs predicted, with paired-bootstrap intervals.
 
     `exclude_errors` drops issues where either run fell back (e.g. a provider outage), to
     isolate the effect of a change from infrastructure noise.
     """
-    cfg_a, split_a, preds_a = _load_run(run_a)
-    _, split_b, preds_b = _load_run(run_b)
+    cfg_a, split_a, preds_a = load_run(run_a)
+    _, split_b, preds_b = load_run(run_b)
     if split_a != split_b:
         raise ValueError(f"Runs are on different splits ({split_a} vs {split_b}).")
-    examples = load_split(cfg_a.dataset.data_dir, load_profile(cfg_a.dataset.profile), split_a)
+    examples = examples_for(cfg_a, split_a, labels)
     # Later lines win: a retried issue's final prediction replaces its failed attempt.
     latest_a = {p.issue_ref: p for p in preds_a}
     latest_b = {p.issue_ref: p for p in preds_b}
@@ -182,6 +198,58 @@ def compare_runs(
             )
         )
     return rows
+
+
+def rescore_on_gold(
+    runs: list[ScoredRun],
+    runs_dir: Path,
+    cfg: Config,
+    split: Split,
+    *,
+    resamples: int = 1000,
+    include_blind_pass: bool = False,
+) -> list[ScoredRun]:
+    """Every run re-scored against gold. Offline and free: no model is called.
+
+    `include_blind_pass` adds the annotators' blind pass as a row. It is off by default:
+    when the same annotator adjudicated the gold starting from their own blind answer,
+    that row is anchored on itself and is not a baseline (only an independent
+    annotator's blind pass would be).
+    """
+    out: list[ScoredRun] = []
+    for run in runs:
+        if run.split != split:
+            continue
+        run_cfg, _, preds = load_run(runs_dir / run.run_id)
+        latest = {p.issue_ref: p for p in preds}
+        examples = [
+            e for e in examples_for(run_cfg, split, "gold") if e.snapshot.issue_ref in latest
+        ]
+        if not examples:
+            continue
+        card = score(examples, list(latest.values()), resamples=resamples)
+        out.append(run.model_copy(update={"metrics": card.metrics, "stats": card.system}))
+    profile = load_profile(cfg.dataset.profile)
+    records = GoldStore(gold_path(cfg.dataset.data_dir, profile)).load()
+    examples = examples_for(cfg, split, "gold")
+    if examples and include_blind_pass:
+        card = score(examples, human_predictions(records), resamples=resamples)
+        # Named after whoever labeled: a person, or a model annotator (ADR-0035).
+        annotators = ", ".join(sorted({r.annotator for r in records.values()}))
+        out.append(
+            ScoredRun(
+                run_id="gold-labels (blind pass)",
+                name=f"{annotators}, blind",
+                split=split,
+                system="annotator",
+                model="-",
+                created_at=datetime.now(UTC),
+                dataset_hash="gold",
+                metrics=card.metrics,
+                stats=card.system,
+            )
+        )
+    return out
 
 
 def render_comparison(rows: list[DeltaRow], a_name: str, b_name: str) -> str:

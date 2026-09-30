@@ -35,7 +35,8 @@ from triagelab.mcp_server.codeowners import CodeOwners
 from triagelab.retrieval.corpus import NotVisibleError
 from triagelab.retrieval.search import HybridSearcher
 
-TOOLS_VERSION = "1"
+# 2 (iteration 7): code hits and owner lookups name the component owning the path.
+TOOLS_VERSION = "2"
 _SNIPPET_CHARS = 300
 _BODY_CHARS = 6000
 _TRUNCATED = " …[truncated]"
@@ -87,6 +88,7 @@ class Owners(BaseModel):
     path: str
     owners: list[str]
     matched_pattern: str | None
+    component: str | None
 
 
 class ComponentInfo(BaseModel):
@@ -134,6 +136,10 @@ class RepoIntel:
                     self._searcher = self._factory()
         assert self._searcher is not None
         return self._searcher
+
+    def component_name(self, path: str) -> str | None:
+        comp = self.profile.component_of(path.lstrip("/"))
+        return comp.name if comp else None
 
     def check_as_of(self, as_of: datetime) -> datetime:
         aware = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
@@ -243,13 +249,15 @@ def build_server(intel: RepoIntel) -> MCPServer:
     ) -> CodeSearchResult:
         """Search the repository's source code as it was just before the evaluation period.
 
-        Returns file paths, line numbers and the matching line. Useful for finding which
-        module or file an issue is about."""
+        Returns file paths, line numbers, the matching line, and the component that owns
+        each file. Useful for finding which module or file an issue is about."""
         if intel.code is None:
             raise ToolError("No source checkout is available on this server.")
         hits, truncated = intel.code.search(query, path_glob=path_glob, max_results=max_results)
         return CodeSearchResult(
-            checkout_commit=intel.checkout_commit, hits=hits, truncated=truncated
+            checkout_commit=intel.checkout_commit,
+            hits=[h.model_copy(update={"component": intel.component_name(h.path)}) for h in hits],
+            truncated=truncated,
         )
 
     @tool
@@ -258,9 +266,15 @@ def build_server(intel: RepoIntel) -> MCPServer:
             str, Field(description="Repository-relative file path, e.g. 'Lib/asyncio/tasks.py'.")
         ],
     ) -> Owners:
-        """Who owns a file, according to the repository's CODEOWNERS (the last matching rule)."""
+        """Who owns a file, according to the repository's CODEOWNERS (the last matching rule),
+        and which component the file belongs to."""
         owners, pattern = intel.owners.owners_for(path)
-        return Owners(path=path, owners=list(owners), matched_pattern=pattern)
+        return Owners(
+            path=path,
+            owners=list(owners),
+            matched_pattern=pattern,
+            component=intel.component_name(path),
+        )
 
     @tool
     def list_components() -> Components:

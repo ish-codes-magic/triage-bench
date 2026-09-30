@@ -89,9 +89,13 @@ async def test_as_of_ceiling_is_enforced_by_the_server(intel: RepoIntel) -> None
 async def test_code_owners_and_components(intel: RepoIntel) -> None:
     code = await call(intel, "search_code", {"query": "_EndRecData"})
     assert code.structured_content["hits"][0]["path"] == "Lib/zipfile.py"
+    assert code.structured_content["hits"][0]["component"] == "stdlib"  # iteration 7
     assert code.structured_content["checkout_commit"] == "abc123"
     owners = await call(intel, "get_codeowners", {"path": "Lib/zipfile.py"})
     assert owners.structured_content["owners"] == ["@zip-owner"]
+    assert owners.structured_content["component"] == "stdlib"
+    unmapped = await call(intel, "get_codeowners", {"path": "README.rst"})
+    assert unmapped.structured_content["component"] is None
     components = await call(intel, "list_components", {})
     names = [c["name"] for c in components.structured_content["components"]]
     assert "stdlib" in names

@@ -217,3 +217,25 @@ def test_runs_rescore_on_gold_with_a_human_baseline_row(workspace: Path) -> None
         resamples=50,
     )  # fmt: skip
     assert all(r.delta in (0.0, None) for r in gold_rows)
+
+
+def _with_subset(cfg: Config, path: Path) -> Config:
+    return cfg.model_copy(update={"eval": cfg.eval.model_copy(update={"subset": path})})
+
+
+def test_a_subset_run_evaluates_only_its_issues(workspace: Path) -> None:
+    dev = load_split(workspace / "data", load_profile(PROFILE_PATH), "dev")
+    subset = workspace / "subset.txt"
+    subset.write_text(f"# comment\n{dev[0].snapshot.issue_ref}  # trailing\n", encoding="utf-8")
+    outcome = _run(_with_subset(_config(workspace, "majority"), subset))
+    assert outcome.total == 1
+    manifest = json.loads((outcome.run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["details"]["subset"] == subset.as_posix()
+
+
+def test_a_subset_cannot_reach_another_split(workspace: Path) -> None:
+    test_issue = load_split(workspace / "data", load_profile(PROFILE_PATH), "test")[0]
+    subset = workspace / "subset.txt"
+    subset.write_text(test_issue.snapshot.issue_ref + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not in the dev split"):
+        _run(_with_subset(_config(workspace, "majority"), subset))

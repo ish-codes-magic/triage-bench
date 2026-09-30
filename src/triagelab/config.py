@@ -10,6 +10,7 @@ an ablation without anyone noticing.
 """
 
 import copy
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, cast
 
@@ -195,6 +196,15 @@ class EvalConfig(_Strict):
     concurrency: int = Field(default=8, ge=1)
     bootstrap_resamples: int = Field(default=1000, ge=100)
     seed: int = 0
+    # A file of issue refs (one per line, # comments): evaluate only these. The CI
+    # regression gate runs a fixed dev subset (configs/gate/dev-subset.txt).
+    subset: PortablePath | None = None
+
+
+def read_subset(path: Path) -> list[str]:
+    # A comment starts a line or follows whitespace: refs themselves contain '#'.
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [ref for line in lines if (ref := re.sub(r"(^|\s)#.*$", "", line).strip())]
 
 
 class Config(_Strict):

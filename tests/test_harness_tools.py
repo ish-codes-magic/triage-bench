@@ -1,14 +1,23 @@
 """The agent's tools: as_of injection, never-raising execution, bounded output, skills."""
 
 import json
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from triagelab.harness.mcp_client import McpSession
-from triagelab.harness.tools import Toolbox, hide_arguments, mcp_tools, skill_tools
-from triagelab.llm_client import ToolCall
+from triagelab.harness.tools import (
+    RepeatGuard,
+    Toolbox,
+    ToolKind,
+    hide_arguments,
+    mcp_tools,
+    skill_tools,
+)
+from triagelab.llm_client import ToolCall, ToolSpec
 from triagelab.mcp_server.server import build_server
 from triagelab.skills.loader import SkillSet, parse_skill
 
@@ -102,3 +111,37 @@ def test_no_skills_means_no_skill_tools(tmp_path: Path, names: list[str]) -> Non
     make_skill(tmp_path, "demo", "name: demo\ndescription: Demo.")
     tools = skill_tools(SkillSet.from_dir(tmp_path, names), set())
     assert len(tools) == (2 if names else 0)
+
+
+class Counting:
+    """A query tool that counts how often it really runs."""
+
+    kind: ToolKind = "mcp"
+    spec = ToolSpec(name="search", description="Search.", parameters={"type": "object"})
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    def run(self, arguments: Mapping[str, Any]) -> tuple[str, bool]:
+        self.runs += 1
+        return "x" * 300, False
+
+
+def test_repeat_guard_answers_repeats_flags_overlaps_and_shows_the_budget() -> None:
+    tool = Counting()
+    box = Toolbox([tool], max_result_chars=200, guard=RepeatGuard(max_tool_calls=5))
+    first = box.execute(call("search", '{"query": "zipfile empty archive"}'))
+    repeat = box.execute(call("search", '{"query": "zipfile empty archive"}'))
+    overlap = box.execute(call("search", '{"query": "zipfile empty archive crash"}'))
+    fresh = box.execute(call("search", '{"query": "asyncio taskgroup"}'))
+    assert tool.runs == 3  # the exact repeat never ran
+    assert "already called search with exactly these arguments" in repeat.output
+    assert first.output.endswith("[tool calls used: 1 of 5]")  # visible despite truncation
+    assert "overlaps an earlier one" in overlap.output
+    assert "overlaps" not in fresh.output
+    assert fresh.output.endswith("[tool calls used: 3 of 5]")
+
+
+def test_without_a_guard_outputs_are_untouched() -> None:
+    box = Toolbox([Counting()], max_result_chars=1_000)
+    assert box.execute(call("search", '{"query": "q"}')).output == "x" * 300

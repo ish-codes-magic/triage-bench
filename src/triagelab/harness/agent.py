@@ -18,14 +18,14 @@ from triagelab.data.profile import RepoProfile
 from triagelab.harness.budgets import BudgetTracker
 from triagelab.harness.loop import LoopOutcome, run_loop, submit_tool
 from triagelab.harness.mcp_client import McpSession, ToolInfo
-from triagelab.harness.tools import Tool, Toolbox, mcp_tools, skill_tools
+from triagelab.harness.tools import RepeatGuard, Tool, Toolbox, mcp_tools, skill_tools
 from triagelab.harness.tracing import RunTracer
 from triagelab.llm_client import LLMClient, LLMRequest, Message
 from triagelab.prompting import UNTRUSTED_ISSUE, issue_prompt
 from triagelab.skills.loader import SkillSet
 from triagelab.triage import TriageResult
 
-PROMPT_VERSION = "1"  # bump with any change to SYSTEM_PROMPT or the answer schema
+PROMPT_VERSION = "2"  # bump with any change to SYSTEM_PROMPT or the answer schema
 
 
 class LabelGuess(BaseModel):
@@ -45,9 +45,9 @@ class AgentAnswer(BaseModel):
         "and OS labels that clearly apply."
     )
     component: str = Field(description="The component a fix would change, from the list.")
-    component_top3: list[str] = Field(
-        default_factory=list[str], description="Your 3 most likely components, best first."
-    )
+    # Required (iteration 3): with a default, the model omitted it on 77% of issues and
+    # top-3 accuracy silently became top-1.
+    component_top3: list[str] = Field(description="Your 3 most likely components, best first.")
     component_confidence: float = Field(ge=0.0, le=1.0)
     duplicate_of: int | None = Field(
         default=None, description="An earlier issue this one duplicates, or null."
@@ -142,6 +142,8 @@ class AgentTriager:
         tax = profile.taxonomy
         self._allowed_labels = {*tax.type, *tax.area, *self._family_labels}
         self._mcp_infos: list[ToolInfo] = self._select_tools(mcp) if mcp else []
+        activate = agent.skill_activation == "first_call" and bool(len(skills))
+        self._first_tool_choice = "load_skill" if activate else None
         self._system = system_prompt(
             profile.repo,
             has_tools=bool(self._mcp_infos) or bool(len(skills)),
@@ -170,7 +172,8 @@ class AgentTriager:
         if self._mcp is not None:
             tools += mcp_tools(self._mcp, self._mcp_infos, {"as_of": issue.created_at.isoformat()})
         tools += skill_tools(self._skills, loaded)
-        return Toolbox(tools, max_result_chars=self._agent.max_tool_result_chars)
+        guard = RepeatGuard(self._agent.budget.max_tool_calls) if self._agent.repeat_guard else None
+        return Toolbox(tools, max_result_chars=self._agent.max_tool_result_chars, guard=guard)
 
     def triage(self, issue: IssueSnapshot) -> TriageResult:
         started = time.perf_counter()
@@ -217,6 +220,7 @@ class AgentTriager:
                 context_limit_tokens=self._agent.context_limit_tokens,
                 max_validation_retries=self._agent.max_validation_retries,
                 trace=trace,
+                first_tool_choice=self._first_tool_choice,
             )
             stop_reason = outcome.stop_reason
             answer = outcome.answer.model_dump() if outcome.answer else None

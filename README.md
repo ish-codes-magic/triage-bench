@@ -95,24 +95,28 @@ Full table: [reports/results/dev.md](reports/results/dev.md) (regenerated from t
 
 Full report: [reports/retrieval/python__cpython.md](reports/retrieval/python__cpython.md) (`triagelab retrieval eval`).
 
-## The agent (M4): what do tools buy?
+## The agent (M4, then 3 measured iterations): what do tools buy?
 
 Our own agent loop over the `repo-intel` MCP server, with the CPython Agent Skill available on demand. Same model as the single-shot baseline (Qwen3.5-9B, thinking on), same label vocabulary, same issue text. Dev split, n = 100, silver labels.
 
-| system | T1 micro-F1 | T2 duplicate link-F1 | T3 accuracy | $/issue | p50 latency |
-|---|---|---|---|---|---|
-| TF-IDF classifier | 0.71 [0.64, 0.77] | 0.11 [0.00, 0.32] | 0.65 [0.52, 0.77] | $0 | 0.1 s |
-| single-shot LLM, thinking | 0.69 [0.63, 0.74] | 0.00 | 0.76 [0.64, 0.87] | $0.00026 | 23 s |
-| **agent v1** | 0.72 [0.66, 0.77] | **0.43 [0.13, 0.67]** | 0.72 [0.60, 0.83] | $0.0072 | 164 s |
+| system | T1 micro-F1 | T2 duplicate link-F1 | T3 accuracy | T3 top-3 | $/issue | p50 latency |
+|---|---|---|---|---|---|---|
+| TF-IDF classifier | 0.71 [0.64, 0.77] | 0.11 [0.00, 0.32] | 0.65 [0.52, 0.77] | 0.94 | $0 | 0.1 s |
+| single-shot LLM, thinking | 0.69 [0.63, 0.74] | 0.00 | 0.76 [0.64, 0.87] | 0.93 | $0.00026 | 23 s |
+| agent v1 (M4) | 0.72 [0.66, 0.77] | 0.43 [0.13, 0.67] | 0.72 [0.60, 0.83] | 0.80 | $0.0072 | 164 s |
+| **agent, after iterations 3–5** | 0.73 [0.67, 0.78] | **0.43 [0.13, 0.67]** | **0.82 [0.70, 0.91]** | 0.93 | $0.0065 | 99 s |
 
-- **Tools buy retrieval.** The agent is the only system that finds duplicates' originals: **+0.33 [+0.08, +0.58]** link-F1 over nearest-neighbour search, and **+0.44 [+0.13, +0.67]** over the model without tools.
-- **Negative result: no evidence of a gain on labels or components** over a free classifier (+0.01 [−0.06, +0.09] T1 micro-F1), at 28× the single-shot cost.
-- **Progressive disclosure went unused.** The model called `load_skill` on **1 of 100** issues. So this run can't answer H1 (do skills help?) until skill use is ensured, which is itself a finding about small models.
-- **Measured failure modes, the next iterations:**
-  - 53% of answers had to be forced by the step budget (search thrash);
-  - an optional `component_top3` field was mostly omitted, so top-3 accuracy collapsed to top-1.
+- **Tools buy retrieval.** The agent is the only system that finds duplicates' originals: **+0.33 [+0.07, +0.57]** link-F1 over nearest-neighbour search, and **+0.44 [+0.13, +0.67]** over the model without tools.
+- **And now components.** After the iterations, the agent beats TF-IDF on component routing, **+0.17 [+0.04, +0.29]**. Against the single-shot LLM there's no evidence either way (+0.06 [−0.07, +0.18]).
+- **Negative result: labels.** There's no evidence of a gain over a free classifier (+0.02 [−0.05, +0.09] T1 micro-F1), at about 25× the single-shot cost.
+- **What the iterations showed** (→ [iteration log](docs/ITERATIONS.md)):
+  - **Worked:**
+    - a one-line **schema** fix (a required top-3 field: +0.15 top-3, and +0.07 top-1 as a side effect);
+    - a **mechanical** repeat guard (−9% cost at equal accuracy).
+  - **Didn't work:** *telling* the model how to behave. Forcing the repository skill into context changed nothing measurable, and in-context "you already searched this" notes didn't stop the rephrasing.
+  - **Consequence for H1** (do skills help?): the answer at 9B is so far **no**. E5 tests whether a larger model follows the same guidance.
 
-Agent behaviour: [reports/agent/dev-agent-v1.md](reports/agent/dev-agent-v1.md) (`triagelab runs stats`). Traces: JSONL per run, plus OpenTelemetry spans viewable in Arize Phoenix.
+Agent behaviour: [v1](reports/agent/dev-agent-v1.md) and [after iteration 5](reports/agent/dev-agent-iter5.md) (`triagelab runs stats`). Traces: JSONL per run, plus OpenTelemetry spans viewable in Arize Phoenix.
 
 ## The dataset: CPython issues, exactly as they were opened
 

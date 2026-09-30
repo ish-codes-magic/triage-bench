@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3030,
+  "tokens_out": 635,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 284
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-b6c775d8e2eaa72c",
+   "name": "submit_triage",
+   "arguments": "{\"labels\": [{\"label\": \"stdlib\", \"confidence\": 0.95}, {\"label\": \"type-bug\", \"confidence\": 0.95}], \"component\": \"stdlib\", \"component_top3\": [\"stdlib\", \"interpreter-core\", \"tests\"], \"component_confidence\": 0.9, \"duplicate_of\": 9, \"duplicate_confidence\": 0.95, \"duplicate_candidates\": [5, 13, 17, 21, 25, 33, 37, 41, 45], \"needs_info\": true, \"needs_info_confidence\": 0.9, \"missing_info\": [\"reproduction steps\", \"details about scenario 3\", \"expected vs actual behavior\", \"version information\"], \"triage_comment\": \"This appears to be a duplicate of issue #9 which has the exact same title and body. The issue description is minimal and lacks reproduction steps or details about what \\\"scenario 3\\\" means. Please provide more information or reference the original issue.\"}"
+  }
+ ],
+ "reasoning_text": "The issue I'm looking at is \"asyncio problem 129\" with the body \"asyncio pathlib glob event loop task cancel observed in scenario 3.\"\n\nI found issue #9 which has the exact same title and body: \"asyncio pathlib glob event loop task cancel observed in scenario 3.\"\n\nThis appears to be a duplicate. The issue #9 was opened on 2025-05-19 and is still open. The current issue #129 was opened on 2026-05-19 with the exact same content.\n\nThis is clearly a duplicate issue. The reporter seems to be creating new issues with sequential numbers (5, 9, 13, 17, 21, 25, 33, 37, 41, 45, and now 129) all with the same pattern but different scenario numbers.\n\nSince issue #9 has the exact same title and body as this issue, I should mark this as a duplicate of issue #9.\n\nLet me submit the triage:\n- Type: type-bug (already labeled on similar issues)\n- Area: stdlib (asyncio is in stdlib)\n- Component: stdlib (asyncio is in Lib/asyncio/)\n- Duplicate of: 9 (exact same title and body)\n- Needs info: True - the issue description is very minimal and doesn't provide any reproduction steps or details about what \"scenario 3\" means\n\n",
+ "cost_usd": 0.00039825,
+ "original_cost_usd": 0.00039825,
+ "cache_hit": false,
+ "latency_ms": 56905,
+ "attempts": 1
+}

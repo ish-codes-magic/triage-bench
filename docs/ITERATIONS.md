@@ -86,3 +86,138 @@ Reproduce any comparison with `triagelab compare <run_a> <run_b> [--exclude-erro
 - **Reasoning is the cheapest lever so far for a small model:** +0.10 micro-F1 for about a hundredth of a cent per issue.
 - **M4 default:** the agent runs with thinking on.
 - **The bar for M4:** the plain classifier is still as good on labels, so the agent must beat 0.71 micro-F1 *and* justify ~25 s and $0.0003+ per issue with what tools add: duplicates (T2) and components (T3).
+
+---
+
+## Iteration 3: a required field restores top-3 (and helps top-1)
+
+- **Date:** 2026-09-30 · **System:** agent (Qwen3.5-9B, thinking on, CPython skill, repo-intel over MCP)
+- **Runs:** A = `20260929-193240-agent-b2e7e0` (M4 agent v1, prompt v1), B = `20260929-213632-agent-11599c` (prompt v2)
+
+**Observation.**
+- In v1, `component_top3` in the `submit_triage` schema had a default.
+- The model omitted it on 77 of 100 issues, so the agent's "top-3" was really top-1.
+- It scored significantly *below* both baselines on top-3 accuracy (−0.15 vs. TF-IDF).
+
+**Change.** Make `component_top3` required, as in the single-shot schema. This is the only change: prompt version 2.
+
+**Result** (paired bootstrap, 100 issues, no errors in either run):
+
+| metric | v1 | v2 | Δ [95% CI] | |
+|---|---|---|---|---|
+| T3 top-3 accuracy | 0.796 | 0.944 | **+0.148 [+0.059, +0.250]** | significant |
+| T3 accuracy | 0.722 | 0.796 | **+0.074 [+0.017, +0.151]** | significant |
+| T1 micro-F1 | 0.717 | 0.743 | +0.026 [−0.017, +0.069] | no evidence |
+| T2 link F1 | 0.435 | 0.316 | −0.119 [−0.344, +0.084] | no evidence (about 13 duplicates) |
+| T4 F1 | 0.083 | 0.160 | +0.077 [−0.190, +0.340] | no evidence |
+
+**Behaviour** (`runs stats`):
+
+| | v1 | v2 |
+|---|---|---|
+| issues with 3 component candidates | 17 | 79 |
+| skill load rate | 1% | 2% |
+| answers forced by a budget | 53 | 55 |
+| issues with a validation error | 0 | 2 |
+
+**Caveats.**
+- **Different requests:** every request differs (the schema is in every call's tool list), so some of each delta is the model's different path, even at temperature 0.
+- **Provider overload:** DeepInfra's shared pool was overloaded for about 20 minutes during run B (`engine_overloaded`). 89 issues failed with 429s and were resumed after the agent's retry budget was raised (8 attempts, back-off up to 60 s). Resumed steps replay from the cache, so this didn't change any answer.
+
+**Takeaway.**
+- **Required fields beat optional ones:** a one-line schema fix turned the agent's worst metric (top-3) into its best (0.94, level with TF-IDF).
+- **Top-1 improved too.** Asking for ranked alternatives seems to make the first choice more deliberate, a cheap form of self-consistency.
+
+---
+
+## Iteration 4: forcing the skill in doesn't help this model (negative result, reverted)
+
+- **Date:** 2026-09-30 · **System:** agent, prompt v2
+- **Runs:** A = `20260929-213632-agent-11599c` (iteration 3), B = `20260929-224959-agent-fcf838` (`skill_activation: first_call`)
+
+**Observation.**
+- Left to decide, the agent called `load_skill` on 1–2% of issues.
+- So every result so far is effectively "no skill", and H1 (do repository skills help?) was untestable.
+
+**Change.** The harness makes the first model call `tool_choice=load_skill`: the skill body always enters the context, and the model still chooses which reference files to read.
+
+**Result** (paired bootstrap, 100 issues, no errors in either run):
+
+| metric | A | B | Δ [95% CI] | |
+|---|---|---|---|---|
+| T1 micro-F1 | 0.743 | 0.709 | −0.035 [−0.079, +0.010] | no evidence |
+| T1 type micro-F1 | 0.859 | 0.809 | −0.050 [−0.123, +0.014] | no evidence |
+| T2 link F1 | 0.316 | 0.333 | +0.018 [−0.042, +0.079] | no evidence |
+| T3 accuracy | 0.796 | 0.778 | −0.019 [−0.100, +0.070] | no evidence |
+| T4 F1 | 0.160 | 0.000 | −0.160 [−0.364, +0.000] | no evidence (about 15 positives) |
+
+**Behaviour:**
+
+| | A | B |
+|---|---|---|
+| skill load rate | 2% | 100% |
+| reference files read (per issue) | 0.13 | 0.04 |
+| `search_similar_issues` calls per issue | 4.0 | 5.0 |
+| `search_code` calls per issue | 4.0 | 2.3 |
+| tool calls per issue (all) | 9.2 | 9.0 |
+| answers forced by the step budget | 55 | 63 |
+| cost per issue | $0.0071 | $0.0065 |
+
+**Reading.**
+- **The skill was read, but its procedure wasn't followed.** It says "1–3 focused queries" and "most issues need 2–6 tool calls". Total tool use didn't fall (9.2 → 9.0): it moved from code search to issue search, and more answers had to be forced.
+- **Reference files were opened *less* once the body was in context** (0.13 → 0.04 per issue). In A, the model sometimes read references directly without loading the skill.
+- **Needs-info:** both runs flagged 10 of 100 issues, B on different and all-wrong ones. With about 15 positives, that's noise, not a mechanism.
+
+**Decision.**
+- **Reverted** from the reference agent: no measured benefit, and one extra step per issue.
+- The mechanism stays. E2 (the skills ablation, M6) uses `first_call` for every skill variant, so it compares skill *content*, not whether the model happened to look.
+
+**Takeaway.**
+- **A negative result for H1 at this model size:** repository knowledge delivered as a skill, even force-fed, didn't improve a 9B model's triage.
+- **Progressive disclosure assumes a model that decides to read, and then follows what it read.** Qwen3.5-9B did neither reliably. E5 (27B) will show whether that's a size effect.
+
+---
+
+## Iteration 5: a repeat guard makes the agent cheaper, not smarter
+
+- **Date:** 2026-09-30 · **System:** agent, prompt v2 (iteration 3's configuration)
+- **Runs:** A = `20260929-213632-agent-11599c` (iteration 3), B = `20260930-000255-agent-cf734a` (`repeat_guard: true`)
+
+**Observation.**
+- In M4's traces, 9% of tool calls exactly repeated an earlier call, and 39% were near-duplicate queries (same tool, ≥ 50% word overlap).
+- 60 of 100 issues had three or more of them, and about half of all answers were forced by the step budget.
+
+**Change.** The toolbox (`RepeatGuard`) now does three things:
+- answers an exact repeat from history instead of running it;
+- tags a near-duplicate query's result with "this query overlaps an earlier one; if it added nothing new, decide";
+- ends every result with "tool calls used: k of 15".
+
+**Result** (paired bootstrap, 100 issues; B has one genuine `no_answer` fallback, which is scored):
+
+| metric | A | B | Δ [95% CI] | |
+|---|---|---|---|---|
+| T1 micro-F1 | 0.743 | 0.728 | −0.015 [−0.044, +0.015] | no evidence |
+| T2 link F1 | 0.316 | 0.435 | +0.119 [−0.087, +0.342] | no evidence |
+| T3 accuracy | 0.796 | 0.815 | +0.019 [−0.041, +0.088] | no evidence |
+| T4 F1 | 0.160 | 0.083 | −0.077 [−0.250, +0.014] | no evidence |
+| cost per issue | $0.00709 | $0.00645 | **−$0.00064 [−0.00124, −0.00007]** | significant (−9%) |
+| input tokens per issue | 68.1k | 61.4k | **−6.7k [−12.6k, −1.0k]** | significant |
+| tool calls per issue | 9.2 | 9.1 | −0.19 [−0.74, +0.34] | no evidence |
+
+**Behaviour:**
+- 64 of 917 tool calls (7%) were exact repeats answered from history.
+- 270 (29%) got an overlap note.
+- Forced answers: 55 → 48.
+
+**Reading.**
+- **The guard fired constantly, but the model kept rephrasing.** Tool-call counts didn't move.
+- **The savings are real, and they come from not re-sending repeated results**, not from the agent deciding sooner.
+
+**Decision.** Kept in the reference agent: the same accuracy for 9% less.
+
+**Takeaway across iterations 3–5.**
+- **What worked:**
+  - a **schema** change (iteration 3: +0.15 top-3, +0.07 top-1 components);
+  - a **mechanical** harness change (iteration 5: −9% cost).
+- **What didn't:** *telling* the model how to behave, whether through a skill it was made to read (iteration 4) or through in-context notes (iteration 5's overlap notes). Qwen3.5-9B largely ignores process guidance.
+- **Next** (M6/E5): does a larger model follow the same guidance?

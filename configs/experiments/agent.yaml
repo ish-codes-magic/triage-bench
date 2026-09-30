@@ -7,9 +7,15 @@ llm:
   max_tokens: 4000     # per call; thinking tokens count toward it
   timeout_s: 180
 eval: {concurrency: 4}  # 8 parallel calls hit OpenRouter 429s on this route
+# ~10 model calls per issue: with 4 attempts, one burst of DeepInfra's shared-pool overload
+# ("engine_overloaded") sank whole issues. Retry settings never change a cache key.
+retry: {max_attempts: 8, max_delay_s: 60.0}
 system:
   kind: agent
   agent:
     skills: [triage-cpython]
+    # Iteration 4 (forcing load_skill first) measured no gain and was reverted here; E2
+    # sets skill_activation: first_call so every skill variant is actually read.
+    repeat_guard: true  # iteration 5: answer repeats, flag overlapping queries, show budget
     budget: {max_steps: 12, max_tool_calls: 15, max_tokens: 200000, max_cost_usd: 0.03}
     mcp: {transport: stdio, dense: true}

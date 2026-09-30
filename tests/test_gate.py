@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from triagelab.config import load_config, read_subset
 from triagelab.data.storage import read_jsonl
 from triagelab.eval.gate import (
     GateConfig,
@@ -11,10 +12,12 @@ from triagelab.eval.gate import (
     _metric_row,
     bless,
     check,
+    load_gate_config,
     pick_subset,
     render,
 )
 from triagelab.eval.report import DeltaRow
+from triagelab.eval.score import METRICS
 from triagelab.triage import TriageResult
 
 from .test_runner import PROFILE_PATH, _config, _run, workspace  # noqa: F401
@@ -99,3 +102,13 @@ def test_pick_subset_is_stable_and_order_free() -> None:
     assert chosen == sorted(chosen, key=lambda r: int(r.split("#")[1]))
     # Adding one issue changes the subset by at most one issue.
     assert len(set(chosen) - set(pick_subset([*refs, "o/r#101"], 10))) <= 1
+
+
+def test_the_committed_gate_names_real_metrics_and_a_fixed_subset() -> None:
+    root = Path(__file__).resolve().parents[1]
+    gate = load_gate_config(root / "configs" / "gate" / "gate.yaml")
+    assert {r.metric for r in gate.rules} | set(gate.report_metrics) <= set(METRICS)
+    refs = read_subset(root / "configs" / "gate" / "dev-subset.txt")
+    assert len(refs) == len(set(refs)) == 50
+    cfg = load_config(root / "configs" / "gate" / "agent.yaml")
+    assert cfg.eval.subset == Path("configs/gate/dev-subset.txt")

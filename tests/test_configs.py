@@ -17,9 +17,9 @@ from triagelab.llm_client import LLMRequest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = sorted(
     p
-    for folder in ("experiments", "judge")
+    for folder in ("experiments", "judge", "gate")
     for p in (REPO_ROOT / "configs" / folder).glob("*.yaml")
-    if p.name != "rubric.yaml"
+    if p.name not in ("rubric.yaml", "gate.yaml")  # not experiment configs
 )
 
 

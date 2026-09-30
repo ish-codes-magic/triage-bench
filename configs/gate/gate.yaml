@@ -1,0 +1,11 @@
+# The real-API regression gate (eval.yml, ADR-0040): the candidate run vs the blessed
+# baseline (reports/gate/baseline) on the fixed subset, scored with the adjudicated labels.
+# Thresholds apply to point estimates. On 50 issues one issue moves T3 accuracy by 0.02,
+# and iteration 5's no-behaviour-change pair moved T1 micro-F1 by 0.015.
+labels: gold
+rules:
+  - {metric: t1_micro_f1, max_drop: 0.05}
+  - {metric: t3_accuracy, max_drop: 0.08}   # 4 issues
+report_metrics: [t1_type_micro_f1, t1_area_micro_f1, t3_top3_accuracy, t2_link_f1]
+max_cost_increase: 0.30   # relative, per issue
+max_error_rate: 0.06      # 3 of 50 answers may be fallbacks

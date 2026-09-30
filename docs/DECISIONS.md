@@ -803,3 +803,47 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - The two E5 arms force the final answer differently: hard for 9B, soft for 27B. The count of `no_answer` after a forced call is reported, so the difference is visible.
 - The partial Alibaba run (`20260930-114257-e5-agent-27b-3eca81`) is discarded as an infrastructure failure, not a result.
 - §0's `small_model` route changes to `novita/bf16`.
+
+## ADR-0040: The real-API regression gate: fixed subset, blessed baseline, point-estimate thresholds
+
+**Context.**
+- §12.8 asks for a regression gate on real model calls:
+  - a fixed 50-issue dev subset;
+  - a paired-bootstrap delta table posted on the PR;
+  - failure if a headline metric drops beyond a threshold;
+  - a cost cap and the owner's approval.
+- The dataset is gitignored and takes hours to collect, so a CI runner doesn't have it.
+- Each gate run costs about $0.35 of a $150 project budget.
+
+**Decision.**
+- **Subset:** `configs/gate/dev-subset.txt` holds the 50 adjudicated, usable dev issues with the smallest stable hash (`triagelab gate subset`).
+  - It's order-independent and reproducible.
+  - `eval.subset` refuses any ref outside the requested split.
+- **Baseline:** `triagelab gate bless <run>` copies a run's subset predictions, records and failure tags (not its traces) to `reports/gate/baseline/`, which is committed. The owner re-blesses after a merge that changes the reference agent. Comparing against a committed baseline halves the cost of each gate run and makes "what are we comparing against" reviewable in git.
+- **Rules** (`configs/gate/gate.yaml`, scored on gold labels):
+  - FAIL when T1 micro-F1 falls by more than 0.05 or T3 accuracy by more than 0.08 (4 issues);
+  - FAIL when cost per issue rises by more than 30%;
+  - FAIL when more than 6% of answers are fallbacks;
+  - FAIL when the candidate misses any baseline issue. Without this rule, a crashed run passed with nothing to compare; the rule was added after exactly that happened in a local dry run.
+  - A significant drop that stays inside its threshold is a WARN.
+  - T2 is report-only: the subset has 2 duplicates.
+- **Why thresholds apply to point estimates, not CIs:** on 50 issues a real 5-point drop is rarely significant, so a CI-based gate would almost never fire. The CI is printed next to every delta for the reviewer.
+- **Data:** an **eval pack** (`triagelab gate pack`, about 29 MB) holds:
+  - the dataset tables with every test-period row removed (the test sample and its reserve);
+  - the retrieval index;
+  - a SHA-256 manifest.
+
+  `gate unpack` verifies each file and refuses a pack that claims test rows. The source checkout is re-downloaded at the frozen commit, and the gold labels are in git.
+- **Workflow (`eval.yml`):**
+  - Triggers: the `run-eval` PR label, or a manual dispatch.
+  - The `eval` environment requires owner approval and holds the API key. Fork PRs are excluded, and `pull_request_target` is never used.
+  - At most one gate every 6 days unless forced; the run is capped at $1.
+  - Concurrency never cancels a paid run.
+  - The table goes to the job summary and a sticky PR comment, and the run folder is uploaded for 14 days.
+
+**Consequences.**
+- The gate needs three one-time actions from the owner, all outward-facing:
+  1. publish the eval pack as the `evalpack-v1` release asset;
+  2. create the `eval` environment with themselves as required reviewer;
+  3. add the `OPENROUTER_API_KEY` secret to it.
+- The thresholds are a first guess from the iteration 3–5 pairs. An A/A run (baseline configuration against itself, uncached) would measure run-to-run noise directly, and they should be revisited once one exists.

@@ -106,7 +106,7 @@ def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
     if request.tool_choice is not None:
         params["tool_choice"] = (
             request.tool_choice
-            if request.tool_choice in ("auto", "none")
+            if request.tool_choice in ("auto", "none", "required")
             else {"type": "function", "function": {"name": request.tool_choice}}
         )
     extra_body: dict[str, Any] = {}

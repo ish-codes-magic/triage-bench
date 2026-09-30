@@ -155,6 +155,15 @@ The process was the one designed for a human:
 - **Tone is not validated:** QWK 0.17, because the judge scores tone about 0.7 higher.
 - Padding a comment with polite filler *lowers* its tone score, so there's no verbosity bias.
 
+**Why the agent fails** (failure taxonomy v1: 60 failures open-coded into 20 codes, merged into 10 categories; → [docs/FAILURE_TAXONOMY.md](docs/FAILURE_TAXONOMY.md)):
+- **Mostly label judgement, not retrieval:**
+  - topic/OS labels added for a mere mention (28);
+  - the wrong half of a module, or the symptom's location instead of the fix's (24);
+  - crash vs. bug (17).
+- **Retrieval causes only 9.**
+- **The rules that prevent these errors are in the repository skill,** which the 9B model neither loads nor follows.
+- **An LLM tagger reproduces 6 of the 10 categories at κ ≥ 0.6**, and its counts appear in every run report. The other four are marked unvalidated.
+
 ## The dataset: CPython issues, exactly as they were opened
 
 5,476 [python/cpython](https://github.com/python/cpython) issues (May 2025 – Aug 2026), with silver ground truth for all four tasks. See the [dataset card](data/DATASET_CARD.md) and the [generated report](reports/data/python__cpython.md).
@@ -227,7 +236,7 @@ The process was the one designed for a human:
 - [x] **M2 Baselines + scorers:** eval runner, metrics with bootstrap CIs, first results table
 - [x] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
 - [x] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
-- [ ] **M5 Gold labels, judge, failure taxonomy**
+- [x] **M5 Gold labels, judge, failure taxonomy** (labels by a model annotator, ADR-0035)
 - [ ] **M6 Iteration loop + LLM regression gate in CI**
 - [ ] **M7 Decision layer:** Jev, LLM and classifier backends, calibration, cascade
 - [ ] **M8 Transfer repo + one-time test-set evaluation**

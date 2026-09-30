@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3578,
+  "tokens_out": 163,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 124
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-acb0efbc3d4aec9b",
+   "name": "get_issue",
+   "arguments": "{\"number\": 21}"
+  }
+ ],
+ "reasoning_text": "The search results show several similar issues with the same pattern: \"asyncio pathlib glob event loop task cancel observed in scenario X\". The issue I'm looking at is \"asyncio problem 121\" which mentions \"scenario 0\". I can see there are issues 21 and 41 that also mention \"scenario 0\".\n\nLet me check issue 21 first since it's the closest match (also scenario 0, and it's from 2025-05-19). I should also check issue 41.\n\nLet me get the details of issue 21 to see if this is a duplicate.\n\n",
+ "cost_usd": 0.00038225,
+ "original_cost_usd": 0.00038225,
+ "cache_hit": false,
+ "latency_ms": 10624,
+ "attempts": 2
+}

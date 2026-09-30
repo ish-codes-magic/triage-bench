@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2755,
+  "tokens_out": 103,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 90
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-a52cbf70f00ea367",
+   "name": "get_issue",
+   "arguments": "{\"number\": 4}"
+  }
+ ],
+ "reasoning_text": "The search results show several issues with very similar titles and snippets. Issue #4 and #24 both have the exact same snippet \"documentation typo howto sphinx wording observed in scenario 3.\" This suggests they might be duplicates or at least very similar issues.\n\nLet me get the full details of issue #4 and #24 to understand if this is a duplicate.\n\n",
+ "cost_usd": 0.00029095,
+ "original_cost_usd": 0.00029095,
+ "cache_hit": false,
+ "latency_ms": 4692,
+ "attempts": 1
+}

@@ -1,0 +1,29 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3757,
+  "tokens_out": 157,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 112
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-b1c13c4c52abcbc7",
+   "name": "get_issue",
+   "arguments": "{\"number\": 3}"
+  },
+  {
+   "id": "chatcmpl-tool-9d07ae45eeb659aa",
+   "name": "get_issue",
+   "arguments": "{\"number\": 11}"
+  }
+ ],
+ "reasoning_text": "The issue I'm looking at is extremely similar to issue #7. Both have:\n- Title: \"_sqlite3 problem X\" (where X is different)\n- Body: \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nThe body text is identical. This looks like a duplicate - the reporter is just changing the number in the title but the actual issue description is the same.\n\nLet me check a few more of these to see if they're all duplicates of each other.\n\n",
+ "cost_usd": 0.0003992500000000001,
+ "original_cost_usd": 0.0003992500000000001,
+ "cache_hit": false,
+ "latency_ms": 7697,
+ "attempts": 1
+}

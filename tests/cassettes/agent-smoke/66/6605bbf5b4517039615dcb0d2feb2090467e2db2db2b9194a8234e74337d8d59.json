@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 3571,
+  "tokens_out": 142,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 125
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-8d09b181053cab25",
+   "name": "get_issue",
+   "arguments": "{\"number\": 7}"
+  }
+ ],
+ "reasoning_text": "The issue is very vague - it just says \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\" This is extremely similar to other issues I found. Let me look at a few of these similar issues to understand the pattern and see if this is a duplicate.\n\nLooking at the search results, I see issues 7, 27, and 47 all have the exact same snippet: \"_sqlite3 C module cursor sqlite binding observed in scenario 1.\"\n\nLet me check issue 7 since it has the same snippet and was opened earlier.\n\n",
+ "cost_usd": 0.00037840000000000004,
+ "original_cost_usd": 0.00037840000000000004,
+ "cache_hit": false,
+ "latency_ms": 7193,
+ "attempts": 1
+}

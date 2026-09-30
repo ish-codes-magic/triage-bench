@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2971,
+  "tokens_out": 162,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 138
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-96a9640803e81011",
+   "name": "get_issue",
+   "arguments": "{\"number\": 2}"
+  }
+ ],
+ "reasoning_text": "The search results show many similar issues with the same pattern: \"segfault refcount dealloc bytecode eval loop observed in scenario X\". The current issue is \"segfault problem 122\" with \"scenario 1\".\n\nI see issue #2 has \"scenario 1\" and is titled \"segfault problem 2\". Let me check if issue #2 is the same as this issue or if they're duplicates. Let me get the full text of issue #2 to compare.\n\nActually, looking at the pattern, these seem to be a series of related issues. Let me check issue #2 to see if it's the same issue or a duplicate.\n\n",
+ "cost_usd": 0.00032140000000000006,
+ "original_cost_usd": 0.00032140000000000006,
+ "cache_hit": false,
+ "latency_ms": 9330,
+ "attempts": 1
+}

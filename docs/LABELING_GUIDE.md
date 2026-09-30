@@ -56,3 +56,27 @@ Choose the latest agent run. Each failure shows what differed (for example `T3: 
 - "ground-truth noise" is a legitimate answer when the agent was right and the label wasn't.
 
 After about 50 tags, the codes are merged into 6-10 categories (`docs/FAILURE_TAXONOMY.md`), and an LLM tagger is checked against your tags before it labels the rest.
+
+---
+
+## Labeling from files (`triagelab annotate`)
+
+The same three tasks can be done offline on Markdown batches. This is how the model annotator worked (ADR-0035), and how a person can label without the app. Every import is validated with the app's rules, and a file with one bad line stores nothing.
+
+```bash
+# Gold labels: blind first; final-pass evidence only exists for blind-labeled issues
+uv run triagelab annotate export-gold --pass blind --split dev --out batches/gold-blind
+uv run triagelab annotate import-gold answers/gold-blind-*.jsonl --annotator NAME
+uv run triagelab annotate export-gold --pass final --split dev --out batches/gold-final
+uv run triagelab annotate import-gold answers/gold-final-*.jsonl --pass final --annotator NAME
+
+# Ratings: opaque ids; the id-to-comment keys go to batches/ratings-keys/ (don't read them)
+uv run triagelab annotate export-ratings --out batches/ratings
+uv run triagelab annotate import-ratings answers/ratings-01.jsonl --key batches/ratings-keys/ratings-01.key.json --annotator NAME
+
+# Failure tags for one run, against gold
+uv run triagelab annotate export-failures runs/<run_id> --out batches/failures --limit 50
+uv run triagelab annotate import-failures runs/<run_id> answers/failures-01.jsonl --annotator NAME
+```
+
+Every record stores its annotator, and reports are named after whoever labeled.

@@ -654,8 +654,9 @@ def failures_validate(
     taxonomy_path: Annotated[Path, typer.Option("--taxonomy")] = Path(
         "configs/failures/taxonomy.yaml"
     ),
+    out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/failures"),
 ) -> None:
-    """Agreement between the person's failure tags and the LLM tagger's, per category."""
+    """Agreement between the reference failure tags and the LLM tagger's, per category."""
     from triagelab.data.storage import read_parquet
     from triagelab.eval.failure_tagger import (
         FAILURES_FILE,
@@ -675,11 +676,28 @@ def failures_validate(
     }
     llm = {r["issue_ref"]: set(r["categories"]) for r in read_parquet(run_dir / FAILURES_FILE)}
     rows, exact, jaccard = tag_agreement(human, llm, taxonomy.names())
-    typer.echo(f"{rows[0].n if rows else 0} failures tagged by both")
-    typer.echo(f"exact category-set agreement {exact:.2f}, mean Jaccard {jaccard:.2f}")
+    annotators = ", ".join(
+        sorted({t.annotator for (run, _), t in tags.items() if run == run_dir.name})
+    )
+    lines = [
+        f"# Failure tagger validation: {run_dir.name}",
+        "",
+        f"Taxonomy v{taxonomy.version}; reference tags by {annotators}; "
+        f"{rows[0].n if rows else 0} failures tagged by both. Exact category-set agreement "
+        f"{exact:.2f}, mean Jaccard {jaccard:.2f}. A category counts as validated at kappa >= 0.6.",
+        "",
+        "| category | reference | tagger | kappa | validated |",
+        "|---|---|---|---|---|",
+    ]
     for r in rows:
         kappa = "n/a" if r.kappa is None else f"{r.kappa:.2f}"
-        typer.echo(f"  {r.category:28} human {r.human:3}  llm {r.llm:3}  kappa {kappa}")
+        ok = "yes" if r.kappa is not None and r.kappa >= 0.6 else "no"
+        lines.append(f"| {r.category} | {r.human} | {r.llm} | {kappa} | {ok} |")
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    out = out_dir / f"{run_dir.name}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(text.encode("utf-8"))
 
 
 AnnotatorOpt = Annotated[str, typer.Option(help="Recorded with every answer: a person or a model.")]

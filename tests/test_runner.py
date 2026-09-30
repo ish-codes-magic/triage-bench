@@ -207,9 +207,9 @@ def test_runs_rescore_on_gold_with_a_human_baseline_row(workspace: Path) -> None
         )  # fmt: skip
     runs = rescore_on_gold(load_scored_runs(workspace / "runs"), workspace / "runs", cfg, "dev")
     by_name = {r.name: r for r in runs}
-    assert set(by_name) == {"e-a", "human, blind"}
+    assert set(by_name) == {"e-a", "t, blind"}  # named after the annotator
     assert by_name["e-a"].stats.issues == 2  # only the adjudicated issues
-    assert by_name["human, blind"].metrics["t3_accuracy"].point == 1.0
+    assert by_name["t, blind"].metrics["t3_accuracy"].point == 1.0
     gold_rows = compare_runs(
         workspace / "runs" / runs[0].run_id, workspace / "runs" / runs[0].run_id, labels="gold",
         resamples=50,

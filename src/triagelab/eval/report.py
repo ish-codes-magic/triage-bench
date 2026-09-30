@@ -225,12 +225,14 @@ def rescore_on_gold(
     examples = examples_for(cfg, split, "gold")
     if examples:
         card = score(examples, human_predictions(records), resamples=resamples)
+        # Named after whoever labeled: a person, or a model annotator (ADR-0035).
+        annotators = ", ".join(sorted({r.annotator for r in records.values()}))
         out.append(
             ScoredRun(
                 run_id="gold-labels (blind pass)",
-                name="human, blind",
+                name=f"{annotators}, blind",
                 split=split,
-                system="human",
+                system="annotator",
                 model="-",
                 created_at=datetime.now(UTC),
                 dataset_hash="gold",

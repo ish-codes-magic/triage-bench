@@ -127,3 +127,51 @@ Reproduce any comparison with `triagelab compare <run_a> <run_b> [--exclude-erro
 **Takeaway.**
 - **Required fields beat optional ones:** a one-line schema fix turned the agent's worst metric (top-3) into its best (0.94, level with TF-IDF).
 - **Top-1 improved too.** Asking for ranked alternatives seems to make the first choice more deliberate, a cheap form of self-consistency.
+
+---
+
+## Iteration 4: forcing the skill in doesn't help this model (negative result, reverted)
+
+- **Date:** 2026-09-30 · **System:** agent, prompt v2
+- **Runs:** A = `20260929-213632-agent-11599c` (iteration 3), B = `20260929-224959-agent-fcf838` (`skill_activation: first_call`)
+
+**Observation.**
+- Left to decide, the agent called `load_skill` on 1–2% of issues.
+- So every result so far is effectively "no skill", and H1 (do repository skills help?) was untestable.
+
+**Change.** The harness makes the first model call `tool_choice=load_skill`: the skill body always enters the context, and the model still chooses which reference files to read.
+
+**Result** (paired bootstrap, 100 issues, no errors in either run):
+
+| metric | A | B | Δ [95% CI] | |
+|---|---|---|---|---|
+| T1 micro-F1 | 0.743 | 0.709 | −0.035 [−0.079, +0.010] | no evidence |
+| T1 type micro-F1 | 0.859 | 0.809 | −0.050 [−0.123, +0.014] | no evidence |
+| T2 link F1 | 0.316 | 0.333 | +0.018 [−0.042, +0.079] | no evidence |
+| T3 accuracy | 0.796 | 0.778 | −0.019 [−0.100, +0.070] | no evidence |
+| T4 F1 | 0.160 | 0.000 | −0.160 [−0.364, +0.000] | no evidence (about 15 positives) |
+
+**Behaviour:**
+
+| | A | B |
+|---|---|---|
+| skill load rate | 2% | 100% |
+| reference files read (per issue) | 0.13 | 0.04 |
+| `search_similar_issues` calls per issue | 4.0 | 5.0 |
+| `search_code` calls per issue | 4.0 | 2.3 |
+| tool calls per issue (all) | 9.2 | 9.0 |
+| answers forced by the step budget | 55 | 63 |
+| cost per issue | $0.0071 | $0.0065 |
+
+**Reading.**
+- **The skill was read, but its procedure wasn't followed.** It says "1–3 focused queries" and "most issues need 2–6 tool calls". Total tool use didn't fall (9.2 → 9.0): it moved from code search to issue search, and more answers had to be forced.
+- **Reference files were opened *less* once the body was in context** (0.13 → 0.04 per issue). In A, the model sometimes read references directly without loading the skill.
+- **Needs-info:** both runs flagged 10 of 100 issues, B on different and all-wrong ones. With about 15 positives, that's noise, not a mechanism.
+
+**Decision.**
+- **Reverted** from the reference agent: no measured benefit, and one extra step per issue.
+- The mechanism stays. E2 (the skills ablation, M6) uses `first_call` for every skill variant, so it compares skill *content*, not whether the model happened to look.
+
+**Takeaway.**
+- **A negative result for H1 at this model size:** repository knowledge delivered as a skill, even force-fed, didn't improve a 9B model's triage.
+- **Progressive disclosure assumes a model that decides to read, and then follows what it read.** Qwen3.5-9B did neither reliably. E5 (27B) will show whether that's a size effect.

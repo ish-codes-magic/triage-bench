@@ -17,5 +17,9 @@ system:
     # Iteration 4 (forcing load_skill first) measured no gain and was reverted here; E2
     # sets skill_activation: first_call so every skill variant is actually read.
     repeat_guard: true  # iteration 5: answer repeats, flag overlapping queries, show budget
+    # Iteration 8: topic/OS labels under 0.95 confidence were right 3 times in 44 on dev (42 of
+    # 46 at or above);
+    # 2-fold cross-fitting picked 0.95 in every fold of three runs (docs/ITERATIONS.md).
+    family_label_min_confidence: 0.95
     budget: {max_steps: 12, max_tool_calls: 15, max_tokens: 200000, max_cost_usd: 0.03}
     mcp: {transport: stdio, dense: true}

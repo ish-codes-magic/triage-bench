@@ -5,7 +5,7 @@ extends: ../base.yaml
 name: judge
 llm:
   model: openrouter/openai/gpt-6-luna
-  route: {provider: openai}
+  route: {provider: openai, quantization: null}  # explicit null: base.yaml sets bf16 (deep merge)
   temperature: null   # Luna's endpoint doesn't accept temperature (checked 2026-09-30)
   reasoning: default
   max_tokens: 4000

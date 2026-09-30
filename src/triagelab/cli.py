@@ -38,6 +38,7 @@ data_app = typer.Typer(help="Collect and prepare datasets.", no_args_is_help=Tru
 retrieval_app = typer.Typer(help="Build and evaluate the retrieval index.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=True)
 judge_app = typer.Typer(help="Sample and calibrate the T5 comment judge.", no_args_is_help=True)
+skills_app = typer.Typer(help="Build Agent Skills.", no_args_is_help=True)
 failures_app = typer.Typer(help="Tag failures and validate the tagger.", no_args_is_help=True)
 annotate_app = typer.Typer(
     help="Export annotation batches as files and import the answers (ADR-0035).",
@@ -48,6 +49,7 @@ app.add_typer(data_app, name="data")
 app.add_typer(retrieval_app, name="retrieval")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(judge_app, name="judge")
+app.add_typer(skills_app, name="skills")
 app.add_typer(failures_app, name="failures")
 app.add_typer(annotate_app, name="annotate")
 app.add_typer(runs_app, name="runs")
@@ -839,3 +841,54 @@ def annotate_import_failures(
         file, run_dir.name, {f.issue_ref: f for f in failures}, store, annotator
     )
     typer.echo(f"{file.name}: {n} tags stored")
+
+
+@skills_app.command("bootstrap")
+def skills_bootstrap(
+    name: Annotated[str, typer.Option(help="Skill folder name, e.g. triage-cpython-auto.")],
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    skills_dir: Annotated[Path, typer.Option("--skills-dir")] = Path("skills"),
+    force: Annotated[bool, typer.Option(help="Overwrite an existing skill folder.")] = False,
+) -> None:
+    """Generate a repository skill from CONTRIBUTING, label descriptions and the train split."""
+    from triagelab.data.checkout import checkout_dir
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.dataset import family_vocabulary, load_split
+    from triagelab.skills.bootstrap import (
+        collect_sources,
+        fetch_label_descriptions,
+        generate,
+        write_skill,
+    )
+    from triagelab.skills.loader import parse_skill
+
+    load_dotenv()
+    cfg = load_config(config)
+    profile = load_profile(cfg.dataset.profile)
+    directory = skills_dir / name
+    if directory.exists() and not force:
+        raise typer.BadParameter(
+            f"{directory} exists; a generated skill is not regenerated silently"
+        )
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        typer.echo("GITHUB_TOKEN is not set (needed once to read label descriptions).", err=True)
+        raise typer.Exit(1)
+    data_dir = cfg.dataset.data_dir
+    labels = fetch_label_descriptions(
+        profile.repo, token, data_dir / "raw" / profile.slug / "labels.json"
+    )
+    github_dir = checkout_dir(data_dir, profile) / ".github"
+    contributing = next(
+        (f.read_text(encoding="utf-8") for f in sorted(github_dir.glob("CONTRIBUTING*"))), ""
+    )
+    train = load_split(data_dir, profile, "train")
+    sources = collect_sources(profile, train, family_vocabulary(train, 10), labels, contributing)
+    client = wiring.build_llm_client(cfg, run_id=f"skills-bootstrap-{name}")
+    skill = generate(client, cfg.llm, profile.repo, sources)
+    write_skill(skill, directory, sources_note="CONTRIBUTING, label descriptions, train split")
+    problems = parse_skill(directory).problems
+    typer.echo(f"wrote {directory.as_posix()} (cost ${client.stats.cost_usd:.4f})")
+    if problems:
+        typer.echo(f"spec problems: {problems}", err=True)
+        raise typer.Exit(1)

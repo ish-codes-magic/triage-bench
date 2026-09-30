@@ -1,6 +1,6 @@
 # M5: Gold labels, a calibrated judge, and a failure taxonomy
 
-**What M5 built:** the human side of evaluation.
+**What M5 built:** the reference side of evaluation (labels were produced by a model annotator at the owner's request; see ADR-0035).
 - A labeling app with three pages (gold labels, comment ratings, failure review).
 - Agreement metrics written by hand.
 - Gold re-scoring, including a human baseline.
@@ -48,13 +48,40 @@ data/gold/*.jsonl (committed) ─► results --labels gold   (every run re-score
   - AppTest has `from_file`, `click().run()` and `segmented_control`/`pills` accessors.
 - **GPT-6 Luna on OpenRouter:** it supports structured outputs and rejects `temperature` (checked in M4's endpoint audit), so the judge sends none.
 
-## 3. Results
+## 3. Results (dev; labels by a model annotator at the owner's request, ADR-0035)
 
-*Pending the owner's labeling sessions (docs/LABELING_GUIDE.md):*
-- silver-vs-gold κ per task (`triagelab gold-report`);
-- the gold results table with the human baseline (`triagelab results --labels gold`);
-- judge QWK on judge-dev, then once on judge-test (`triagelab judge calibrate`);
-- taxonomy v1 and tagger agreement (`triagelab failures validate`).
+**Label noise, silver vs. adjudicated** (`reports/gold/dev.md`, 97 usable issues):
+
+| task | κ | agreement | what it means |
+|---|---|---|---|
+| type label | 0.72 | 81% | Maintainers often label demonstrated crashes `type-bug`. |
+| all labels, pooled per label | 0.84 | 98% | |
+| duplicates | 1.00 | 100% | Every maintainer closure held up. |
+| component | 0.90 | 93% | The derived component sometimes follows side files. |
+| **needs-info** | **0.00** | 85% | Silver 15, gold 0: `pending` ≠ "needs info" in CPython. |
+
+**Re-scored on the adjudicated labels** (`reports/results/dev-gold.md`; paired, agent minus baseline):
+- **vs. TF-IDF:**
+  - type labels **+0.11 [+0.03, +0.19]** (no evidence on silver);
+  - duplicates **+0.34**;
+  - components +0.08 [−0.02, +0.19] (significant on silver).
+- **vs. single-shot LLM:** labels **+0.05 [+0.01, +0.10]**.
+
+**Judge** (GPT-6 Luna, prompt v2 frozen; `reports/judge/`):
+
+| criterion | judge-dev v1 → v2 QWK | judge-test QWK (once) | adjacent |
+|---|---|---|---|
+| correctness | 0.55 → 0.68 | **0.57** | 0.93 |
+| actionability | 0.38 → 0.48 | **0.50** | 0.91 |
+| tone | 0.10 → 0.14 | 0.17 (not validated) | 1.00 |
+
+- Padding a comment with polite filler lowered its tone score by 1.8, so there's no verbosity bias.
+- Reversing the criterion order moved scores by at most 0.3.
+
+**Failure taxonomy v1** (`docs/FAILURE_TAXONOMY.md`):
+- 60 failures were open-coded into 20 codes, then consolidated into 10 categories.
+- The top three are topic/OS over-labeling (28), code-location confusion (24) and type-label errors (17): **label judgement, not retrieval**.
+- The LLM tagger reproduces 6 of 10 categories at κ ≥ 0.6. It can't judge "repository guidance unused" or "ground-truth noise".
 
 ## 4. Pitfalls
 
@@ -64,13 +91,19 @@ data/gold/*.jsonl (committed) ─► results --labels gold   (every run re-score
 4. **Judge-test leakage.** Looking at judge-test agreement, then editing the prompt, turns judge-test into judge-dev. The guard refuses a second measurement per judge version.
 5. **Markdown is not "safe text".** Escaping HTML still renders links and images from an attacker-written issue body. Use plain text.
 6. **Frozen item sets.** Re-sampling the comments to rate after a new run would change what "judge agreement" means. The set is written once and refuses to be overwritten.
+7. **A self-adjudicated blind pass is not a baseline.** The design claimed a "human baseline" from the blind pass. But the same annotator made the gold starting from their own blind answer, so it scored 0.96 against itself. Blind-vs-final measures the evidence's effect; a baseline needs an *independent* annotator. Corrected in ADR-0031.
+8. **A κ of 0.00 can be the finding.** Needs-info didn't fail to agree by chance: adjudication showed the silver label measures something else (`pending` = "awaiting a decision").
+9. **Vocabulary drift in annotations.** An annotator used `topic-sysconfig`, a real label outside the scored vocabulary. The import refused the file; the label was dropped and noted.
+10. **Deep merge strikes configs.** `route: {provider: openai}` inherited base.yaml's `quantization: bf16`. The price guard refused the call, and a new test checks every config's route.
+11. **Judges saturate.** Luna gave tone 4 almost always. Scale-use guidance helped correctness and actionability but not tone, so report tone as unvalidated instead of tuning on 54 items.
 
 ## 5. How an interviewer might probe this
 
 - *"How do you know your labels are right?"* → We don't assume it. A blind-then-adjudicated gold set measures silver noise per task with κ, and headline numbers use gold.
 - *"How do you trust an LLM judge?"* → Measured against a human on held-out items (QWK), checked for verbosity and position bias, and frozen and versioned. Any change means re-measuring.
 - *"Why quadratic weights?"* → Rubric scores are ordered. A 3 vs. 4 disagreement is minor and a 1 vs. 4 is severe, and quadratic weights encode that.
-- *"How did you build the failure taxonomy?"* → Bottom-up: open coding of real failures, consolidated into categories, with an LLM tagger validated against the human codes before it scaled.
+- *"How did you build the failure taxonomy?"* → Bottom-up: open coding of real failures, consolidated into categories, with an LLM tagger validated against the reference codes before it scaled. Report which categories it can't reproduce.
+- *"Your labels came from an LLM. Isn't that circular?"* → It's a stated limitation. Provenance is recorded per label and the claims are worded accordingly ("model-adjudicated"). The annotator is a different family from both the agent (Qwen) and the judge (GPT). A human spot-check of about 20 issues would bound the error.
 
 ## 6. Try it yourself (optional exercises)
 

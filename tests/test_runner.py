@@ -205,7 +205,9 @@ def test_runs_rescore_on_gold_with_a_human_baseline_row(workspace: Path) -> None
                 updated_at=FIXED_NOW,
             )
         )  # fmt: skip
-    runs = rescore_on_gold(load_scored_runs(workspace / "runs"), workspace / "runs", cfg, "dev")
+    scored = load_scored_runs(workspace / "runs")
+    assert {r.name for r in rescore_on_gold(scored, workspace / "runs", cfg, "dev")} == {"e-a"}
+    runs = rescore_on_gold(scored, workspace / "runs", cfg, "dev", include_blind_pass=True)
     by_name = {r.name: r for r in runs}
     assert set(by_name) == {"e-a", "t, blind"}  # named after the annotator
     assert by_name["e-a"].stats.issues == 2  # only the adjudicated issues

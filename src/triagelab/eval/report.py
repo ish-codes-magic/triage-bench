@@ -201,11 +201,20 @@ def compare_runs(
 
 
 def rescore_on_gold(
-    runs: list[ScoredRun], runs_dir: Path, cfg: Config, split: Split, *, resamples: int = 1000
+    runs: list[ScoredRun],
+    runs_dir: Path,
+    cfg: Config,
+    split: Split,
+    *,
+    resamples: int = 1000,
+    include_blind_pass: bool = False,
 ) -> list[ScoredRun]:
-    """Every run re-scored against gold, plus the person's blind pass as a "human" row.
+    """Every run re-scored against gold. Offline and free: no model is called.
 
-    Offline and free: stored predictions are scored again; no model is called.
+    `include_blind_pass` adds the annotators' blind pass as a row. It is off by default:
+    when the same annotator adjudicated the gold starting from their own blind answer,
+    that row is anchored on itself and is not a baseline (only an independent
+    annotator's blind pass would be).
     """
     out: list[ScoredRun] = []
     for run in runs:
@@ -223,7 +232,7 @@ def rescore_on_gold(
     profile = load_profile(cfg.dataset.profile)
     records = GoldStore(gold_path(cfg.dataset.data_dir, profile)).load()
     examples = examples_for(cfg, split, "gold")
-    if examples:
+    if examples and include_blind_pass:
         card = score(examples, human_predictions(records), resamples=resamples)
         # Named after whoever labeled: a person, or a model annotator (ADR-0035).
         annotators = ", ".join(sorted({r.annotator for r in records.values()}))

@@ -309,7 +309,10 @@ def results(
     split: str = "dev",
     config: ConfigOpt = DEFAULT_CONFIG,
     out_dir: Annotated[Path, typer.Option("--out-dir")] = Path("reports/results"),
-    labels: Annotated[str, typer.Option(help="silver | gold (adds the human baseline)")] = "silver",
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "silver",
+    with_blind_pass: Annotated[
+        bool, typer.Option(help="Add the annotators' blind pass (only if independent of the gold).")
+    ] = False,
 ) -> None:
     """Write the results table (latest run per experiment) to reports/results/<split>.md."""
     from triagelab.data.splits import parse_split
@@ -320,7 +323,9 @@ def results(
     cfg = load_config(config)
     runs = load_scored_runs(cfg.paths.runs_dir)
     if labels == "gold":
-        runs = rescore_on_gold(runs, cfg.paths.runs_dir, cfg, parse_split(split))
+        runs = rescore_on_gold(
+            runs, cfg.paths.runs_dir, cfg, parse_split(split), include_blind_pass=with_blind_pass
+        )
     table = results_table(runs, split)
     if labels == "gold":
         table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
@@ -588,8 +593,10 @@ def gold_report(
         ),
         "## What the evidence changed: blind vs final (same person)",
         render_agreement(agreement_by_task(list(zip(blinds, finals, strict=True)), vocab), "task"),
-        f"Median blind-pass time: {median(r.blind_seconds for r in done):.0f} s per issue.",
     ]
+    seconds = [r.blind_seconds for r in done if r.blind_seconds > 0]
+    if seconds:  # a model annotator records no labeling time
+        sections.append(f"Median blind-pass time: {median(seconds):.0f} s per issue.")
     text = "\n\n".join(sections) + "\n"
     typer.echo(text)
     out_dir.mkdir(parents=True, exist_ok=True)

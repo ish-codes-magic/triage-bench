@@ -1,36 +1,37 @@
-# Failure taxonomy (AGENTS.md §12.6). v0 = the seed categories, one open code each.
-# After the owner's open coding (~50 tagged failures in the review app), this file is
-# consolidated to 6-10 categories: each lists the open codes that map to it. The prose
-# version, with examples, lives in docs/FAILURE_TAXONOMY.md.
-version: 0
+# Failure taxonomy (AGENTS.md §12.6). v1: consolidated from open coding of 60 failures of
+# the iteration-5 agent against the adjudicated dev labels (20 codes -> 10 categories).
+# Each category lists the open codes it absorbs; docs/FAILURE_TAXONOMY.md has examples.
+# Seed categories that never occurred ("wrong component map", "output validation
+# failure") were dropped; add them back if they appear.
+version: 1
 categories:
-  - name: retrieval miss
-    definition: The information needed (an earlier issue, the right code) was never retrieved.
-    codes: [retrieval miss]
+  - name: topic/OS over-labeling
+    definition: A topic or OS label was added because the subject or platform was mentioned, not because the issue is about it.
+    codes: [over-labeling topics, OS label from mention]
+  - name: code-location confusion
+    definition: The area or component names where the symptom shows up or the wrong half of a module (Python Lib/ vs C Modules/ or the core), not where the fix goes; includes a missing second area label such as performance.
+    codes: [C vs Python area confusion, symptom location vs fix location, missing secondary area label]
+  - name: type-label error
+    definition: The single type label is wrong (crash vs bug, feature vs refactor or regression) or missing.
+    codes: [crash vs bug confusion, type label confusion, missing type label]
+  - name: repository guidance unused
+    definition: The repository skill states the rule that was broken, and it was never loaded or was loaded but not followed.
+    codes: [skill not loaded, skill misapplied]
   - name: correct evidence ignored
-    definition: A tool returned the right answer, but the final decision didn't use it.
+    definition: A tool returned what was needed (an analogous issue, the right file), but the final answer contradicts it.
     codes: [correct evidence ignored]
-  - name: skill not loaded
-    definition: The repository skill would have prevented the error, but it was never loaded.
-    codes: [skill not loaded]
-  - name: skill misapplied
-    definition: The skill was loaded, but its guidance was misread or not followed.
-    codes: [skill misapplied]
-  - name: wrong component map
-    definition: The code location was found but mapped to the wrong component.
-    codes: [wrong component map]
-  - name: stopped too early
-    definition: The agent decided before gathering evidence it clearly needed.
-    codes: [stopped too early]
+  - name: duplicate retrieval error
+    definition: The original of a duplicate was not retrieved, was retrieved but not flagged, was outside the indexed history, or a related issue was taken for a duplicate.
+    codes: [retrieval miss, duplicate under-called, related issue taken as duplicate, original outside index window]
+  - name: search process failure
+    definition: The agent stopped before gathering evidence it needed, or the step budget forced an answer that caused the error.
+    codes: [stopped too early, budget exhaustion]
+  - name: needs-info over-flagging
+    definition: The reporter was asked for information although the report was already actionable.
+    codes: [needs-info over-flagging]
   - name: hallucinated file or label
-    definition: The answer names a file, issue or label that doesn't exist or wasn't seen.
+    definition: The answer names a file, issue or label that doesn't exist or wasn't seen, or pads with unrelated labels.
     codes: [hallucinated file or label]
-  - name: budget exhaustion
-    definition: The step or tool budget forced an answer before the agent had converged.
-    codes: [budget exhaustion]
-  - name: output validation failure
-    definition: The answer failed schema validation, and the fallback was scored.
-    codes: [output validation failure]
   - name: ground-truth noise
-    definition: The system's answer is defensible; the recorded truth is wrong or arbitrary.
+    definition: The agent's answer is defensible and the adjudicated label is debatable, or depends on how the issue was eventually fixed.
     codes: [ground-truth noise]

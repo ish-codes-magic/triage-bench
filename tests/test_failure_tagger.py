@@ -18,11 +18,13 @@ from triagelab.eval.failure_tagger import (
     write_failures,
 )
 from triagelab.eval.failures import Failure
-from triagelab.labeling.failure_tags import SEED_CODES, FailureTag
+from triagelab.labeling.failure_tags import FailureTag
 
 from .fakes import FAKE_MODEL, FakeBackend, make_client
 
 TAXONOMY = load_taxonomy(Path(__file__).resolve().parents[1] / "configs/failures/taxonomy.yaml")
+CATEGORY = TAXONOMY.categories[0].name  # any real category
+CODE = TAXONOMY.categories[0].codes[0]
 FAILURE = Failure(
     issue_ref="o/r#1", trace_id="t", tasks=["T3"], details={"T3": "said docs, truth stdlib"}
 )
@@ -37,16 +39,21 @@ EVENTS = [
 ]
 
 
-def test_seed_taxonomy_covers_every_seed_code() -> None:
-    assert {TAXONOMY.category_of(code) for code in SEED_CODES} == set(TAXONOMY.names())
+def test_committed_taxonomy_is_well_formed() -> None:
+    names = TAXONOMY.names()
+    assert len(names) == len(set(names))
+    codes = [code for c in TAXONOMY.categories for code in c.codes]
+    assert len(codes) == len(set(codes))  # every code maps to exactly one category
+    if TAXONOMY.version >= 1:  # consolidated: AGENTS.md §12.6 asks for 6-10 categories
+        assert 6 <= len(names) <= 10
 
 
 def test_human_codes_map_to_categories_and_unknown_codes_drop() -> None:
     tag = FailureTag(
-        run_id="r", issue_ref="o/r#1", tasks=["T3"], codes=["retrieval miss", "my new code"],
+        run_id="r", issue_ref="o/r#1", tasks=["T3"], codes=[CODE, "my new code"],
         annotator="t", tagged_at=datetime(2026, 9, 30, tzinfo=UTC),
     )  # fmt: skip
-    assert human_categories(tag, TAXONOMY) == {"retrieval miss"}
+    assert human_categories(tag, TAXONOMY) == {TAXONOMY.category_of(CODE)}
 
 
 def test_trace_summary_keeps_calls_results_and_the_stop_reason() -> None:
@@ -58,12 +65,12 @@ def test_trace_summary_keeps_calls_results_and_the_stop_reason() -> None:
 
 
 def test_tagger_keeps_only_known_categories(tmp_path: Path) -> None:
-    reply = json.dumps({"reasoning": "r", "categories": ["budget exhaustion", "made up"]})
+    reply = json.dumps({"reasoning": "r", "categories": [CATEGORY, "made up"]})
     tagger = FailureTagger(
         make_client(tmp_path, FakeBackend(text=reply)), LLMConfig(model=FAKE_MODEL), TAXONOMY
     )
     tagged = tagger.tag(FAILURE, EVENTS, "a title")
-    assert tagged.categories == ["budget exhaustion"]
+    assert tagged.categories == [CATEGORY]
     assert tagged.details == FAILURE.details
 
 

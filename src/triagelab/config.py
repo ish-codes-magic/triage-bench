@@ -148,6 +148,13 @@ class AgentConfig(_Strict):
     # E3 (tools vs stuffing): when > 0, the top-k similar earlier issues are retrieved by
     # the harness (same MCP search, as of creation) and pasted into the prompt.
     stuff_similar_k: int = Field(default=0, ge=0, le=20)
+    # E4: "single" is one agent with every tool. "planner" is a planner call, then a
+    # duplicate scout and a code locator (each its own loop with `worker_budget`), then a
+    # synthesizer with the skills but no retrieval tools (harness/planner.py).
+    architecture: Literal["single", "planner"] = "single"
+    worker_budget: AgentBudgetConfig = AgentBudgetConfig(
+        max_steps=6, max_tool_calls=4, max_tokens=80_000, max_cost_usd=0.01
+    )
     mcp: McpConfig = McpConfig()
 
 

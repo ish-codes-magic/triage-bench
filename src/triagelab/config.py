@@ -72,6 +72,9 @@ class LLMConfig(_Strict):
     seed: int | None = None
     max_tokens: int = Field(default=1024, gt=0)
     timeout_s: float = Field(default=60.0, gt=0)
+    # Can the route force one tool with a named `tool_choice`? Qwen3.5-27B's OpenRouter
+    # endpoints refuse it (ADR-0039); the agent loop then offers only that tool instead.
+    named_tool_choice: bool = True
 
     @model_validator(mode="after")
     def _route_needs_openrouter(self) -> Self:

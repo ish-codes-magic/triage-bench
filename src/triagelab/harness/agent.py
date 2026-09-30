@@ -223,6 +223,7 @@ class AgentTriager:
             max_validation_retries=self._agent.max_validation_retries,
             trace=trace,
             first_tool_choice=self._first_tool_choice,
+            named_tool_choice=self._llm.named_tool_choice,
         )
 
     def _team(
@@ -244,6 +245,7 @@ class AgentTriager:
             context_limit_tokens=self._agent.context_limit_tokens,
             max_result_chars=self._agent.max_tool_result_chars,
             repeat_guard=self._agent.repeat_guard,
+            named_tool_choice=self._llm.named_tool_choice,
         )
 
         def synthesize(findings: str) -> LoopOutcome[AgentAnswer]:

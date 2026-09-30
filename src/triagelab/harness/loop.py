@@ -10,7 +10,8 @@ fields"), at most `max_validation_retries` times.
 Stopping rules, in order of preference:
   - submitted: a valid answer, possibly after a forced final call (see `forced`);
   - forced final call: when a budget is (nearly) spent, the next call gets
-    `tool_choice=submit_triage`, so a slow issue still produces an answer;
+    `tool_choice=submit_triage`, so a slow issue still produces an answer. A route that
+    can't force a named tool is offered only that tool, with a one-line instruction;
   - no_answer / invalid_output / budget: fallbacks with no answer, and the reason
     recorded.
 
@@ -38,6 +39,10 @@ def nudge(submit_name: str) -> str:
         f"Reply with a tool call. Call {submit_name} with your decision now, or another tool "
         "if you still need information."
     )
+
+
+def _force_note(limit: str, submit_name: str) -> str:
+    return f"The {limit} limit is reached. Call {submit_name} now with your decision."
 
 
 _MAX_FEEDBACK_CHARS = 2_000
@@ -108,8 +113,13 @@ def run_loop[A: BaseModel](
     max_validation_retries: int,
     trace: IssueTrace,
     first_tool_choice: str | None = None,
+    named_tool_choice: bool = True,
 ) -> LoopOutcome[A]:
-    """`first_tool_choice` forces the first model call to use that tool (e.g. load_skill)."""
+    """`first_tool_choice` forces the first model call to use that tool (e.g. load_skill).
+
+    `named_tool_choice=False` is for routes that reject a named `tool_choice`: a forced
+    call then offers only the forced tool, which the model is asked to call.
+    """
     convo = list(messages)
     logged = 0  # prompt messages (system/user) already written to the trace
     tools = (*toolbox.specs, submit)
@@ -128,7 +138,7 @@ def run_loop[A: BaseModel](
         cost_usd=0.0,
         spent_usd=0.0,
     )
-    nudged = False
+    nudged = told = False
 
     while not budget.exhausted():
         convo, compaction = compact(convo, limit_tokens=context_limit_tokens)
@@ -136,13 +146,16 @@ def run_loop[A: BaseModel](
             out.compactions += 1
             trace.event("compaction", step=out.steps + 1, **compaction._asdict())
         forced = budget.submit_reason()
-        opening = first_tool_choice if out.steps == 0 else None
+        choice = submit.name if forced else (first_tool_choice if out.steps == 0 else None)
+        offered = tools
+        if choice is not None and not named_tool_choice:
+            offered = tuple(t for t in tools if t.name == choice)
+            if forced and not told:
+                told = True
+                convo.append(Message(role="user", content=_force_note(forced, submit.name)))
+            choice = None
         request = base.model_copy(
-            update={
-                "messages": tuple(convo),
-                "tools": tools,
-                "tool_choice": submit.name if forced else opening,
-            }
+            update={"messages": tuple(convo), "tools": offered, "tool_choice": choice}
         )
         response = client.complete(request)
         budget.record_call(response)

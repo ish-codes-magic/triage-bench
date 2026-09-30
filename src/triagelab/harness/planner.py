@@ -111,6 +111,7 @@ class Crew:
     context_limit_tokens: int
     max_result_chars: int
     repeat_guard: bool
+    named_tool_choice: bool = True
 
 
 class Totals:
@@ -228,6 +229,7 @@ def run_worker[F: BaseModel](
         context_limit_tokens=crew.context_limit_tokens,
         max_validation_retries=1,
         trace=crew.trace,
+        named_tool_choice=crew.named_tool_choice,
     )
 
 

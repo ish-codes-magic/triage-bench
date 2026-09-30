@@ -163,6 +163,10 @@ Agent behaviour: [v1](reports/agent/dev-agent-v1.md) and [after iteration 5](rep
   - A synchronous MCP client (anyio blocking portal) talks to `repo-intel` as a real stdio subprocess.
   - Agent Skills with progressive disclosure, held to the open spec by tests.
   - Every model and tool call is traced to JSONL and to OpenTelemetry spans (OpenInference attributes, viewable in Phoenix).
+- **Human evaluation, instrumented.**
+  - A Streamlit labeling app (tested end to end with Streamlit's AppTest) collects gold labels in two passes: first **blind**, from exactly what the systems see, then **adjudicated** against the evidence. One session yields gold labels, a human baseline, and a measure of anchoring. → [ADR-0031](docs/DECISIONS.md#adr-0031-gold-labels-are-collected-blind-then-adjudicated-with-evidence)
+  - An LLM judge for triage comments is calibrated against human ratings with quadratic-weighted κ. It also gets verbosity and position bias checks, and a guard that allows one judge-test measurement per frozen judge version.
+  - Failures are open-coded into a taxonomy, and an LLM tagger is validated against the human tags before its counts appear in run reports. Guidelines: [docs/LABELING_GUIDE.md](docs/LABELING_GUIDE.md).
 - **Jobs that survive being killed.**
   - The 12k-issue embedding build is resumable and keyed by issue number, with atomic chunk writes.
   - It was stopped twice under memory pressure and finished without redoing work.

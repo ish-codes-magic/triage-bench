@@ -40,6 +40,7 @@ mcp_app = typer.Typer(help="Run the repo-intel MCP server.", no_args_is_help=Tru
 judge_app = typer.Typer(help="Sample and calibrate the T5 comment judge.", no_args_is_help=True)
 skills_app = typer.Typer(help="Build Agent Skills.", no_args_is_help=True)
 failures_app = typer.Typer(help="Tag failures and validate the tagger.", no_args_is_help=True)
+gate_app = typer.Typer(help="The CI regression gate (eval.yml).", no_args_is_help=True)
 annotate_app = typer.Typer(
     help="Export annotation batches as files and import the answers (ADR-0035).",
     no_args_is_help=True,
@@ -51,6 +52,7 @@ app.add_typer(mcp_app, name="mcp")
 app.add_typer(judge_app, name="judge")
 app.add_typer(skills_app, name="skills")
 app.add_typer(failures_app, name="failures")
+app.add_typer(gate_app, name="gate")
 app.add_typer(annotate_app, name="annotate")
 app.add_typer(runs_app, name="runs")
 app.add_typer(llm_app, name="llm", no_args_is_help=True)
@@ -892,3 +894,99 @@ def skills_bootstrap(
     if problems:
         typer.echo(f"spec problems: {problems}", err=True)
         raise typer.Exit(1)
+
+
+GateBaselineOpt = Annotated[
+    Path, typer.Option("--baseline", help="The blessed baseline (a run folder).")
+]
+DEFAULT_GATE_BASELINE = Path("reports/gate/baseline")
+
+
+@gate_app.command("check")
+def gate_check(
+    candidate: Annotated[Path, typer.Argument(help="The candidate run folder.")],
+    baseline: GateBaselineOpt = DEFAULT_GATE_BASELINE,
+    gate_config: Annotated[Path, typer.Option("--gate")] = Path("configs/gate/gate.yaml"),
+    out: Annotated[Path | None, typer.Option("--out", help="Also write the report here.")] = None,
+) -> None:
+    """Compare a candidate run with the baseline; exit 1 if the gate fails."""
+    from triagelab.eval.gate import check, load_gate_config, render
+
+    report = check(baseline, candidate, load_gate_config(gate_config))
+    text = render(report)
+    typer.echo(text)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text.encode("utf-8"))
+    if report.verdict == "fail":
+        raise typer.Exit(code=1)
+
+
+@gate_app.command("bless")
+def gate_bless(
+    run_dir: Annotated[Path, typer.Argument(help="The run to make the baseline.")],
+    dest: GateBaselineOpt = DEFAULT_GATE_BASELINE,
+    subset: Annotated[Path, typer.Option("--subset")] = Path("configs/gate/dev-subset.txt"),
+) -> None:
+    """Make a run the gate's baseline, restricted to the gate's subset (commit the result)."""
+    from triagelab.config import read_subset
+    from triagelab.eval.gate import bless
+
+    n = bless(run_dir, dest, read_subset(subset))
+    typer.echo(f"baseline: {run_dir.name} ({n} issues) -> {dest.as_posix()}")
+
+
+@gate_app.command("subset")
+def gate_subset(
+    n: Annotated[int, typer.Option(help="Subset size.")] = 50,
+    out: Annotated[Path, typer.Option("--out")] = Path("configs/gate/dev-subset.txt"),
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Pick the gate's fixed subset from the adjudicated, usable dev issues."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.gate import pick_subset
+    from triagelab.labeling.gold import GoldStore, gold_path
+
+    cfg = load_config(config)
+    profile = load_profile(cfg.dataset.profile)
+    records = GoldStore(gold_path(cfg.dataset.data_dir, profile)).load().values()
+    refs = [r.issue_ref for r in records if r.split == "dev" and not r.unusable]
+    chosen = pick_subset(refs, n)
+    header = (
+        f"# The regression gate's fixed dev subset: {len(chosen)} of {len(refs)} adjudicated,\n"
+        "# usable dev issues, chosen by `triagelab gate subset` (smallest stable hash).\n"
+    )
+    out.write_bytes((header + "\n".join(chosen) + "\n").encode("utf-8"))
+    typer.echo(f"{len(chosen)} issues -> {out.as_posix()}")
+
+
+@gate_app.command("pack")
+def gate_pack(
+    profile_path: ProfileOpt,
+    data_dir: DataDirOpt = Path("data"),
+    out: Annotated[Path, typer.Option("--out")] = Path("dist/evalpack.tar.gz"),
+) -> None:
+    """Pack the dataset tables (no test rows) and the retrieval index for CI."""
+    from triagelab.data.evalpack import build_pack
+    from triagelab.data.profile import load_profile
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    manifest = build_pack(data_dir, load_profile(profile_path), out)
+    size = out.stat().st_size / 1e6
+    typer.echo(f"{len(manifest.files)} files, splits {manifest.splits}, {size:.1f} MB -> {out}")
+
+
+@gate_app.command("unpack")
+def gate_unpack(
+    archive: Annotated[Path, typer.Argument(help="An eval pack (.tar.gz).")],
+    data_dir: DataDirOpt = Path("data"),
+) -> None:
+    """Unpack and verify an eval pack; refuses a pack with test-split rows."""
+    from triagelab.data.evalpack import PackError, extract_pack
+
+    try:
+        manifest = extract_pack(archive, data_dir)
+    except PackError as err:
+        typer.echo(f"eval pack rejected: {err}", err=True)
+        raise typer.Exit(code=1) from err
+    typer.echo(f"{len(manifest.files)} files verified, splits {manifest.splits}")

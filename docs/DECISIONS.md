@@ -847,3 +847,23 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
   2. create the `eval` environment with themselves as required reviewer;
   3. add the `OPENROUTER_API_KEY` secret to it.
 - The thresholds are a first guess from the iteration 3–5 pairs. An A/A run (baseline configuration against itself, uncached) would measure run-to-run noise directly, and they should be revisited once one exists.
+
+## ADR-0041: The 9B route runs on the owner's DeepInfra key (BYOK)
+
+**Context.**
+- From about 11:47 UTC on 2026-09-30, OpenRouter's *shared* DeepInfra pool for Qwen3.5-9B answered most calls with 429 `engine_overloaded` (`limit_source: upstream_provider_shared_pool`).
+- The pool got about 1–10 calls a minute through, and the iteration-6 run had 79 of 89 issues failing. The endpoint's uptime figures still looked normal, because they don't count these 429s.
+- The alternatives each had a cost:
+  - moving to an fp8 host changes the model;
+  - Parasail bf16 has no tool calling;
+  - making the 27B the agent changes §0.
+
+**Decision.**
+- The owner added a DeepInfra key to OpenRouter (BYOK). Nothing in the requests changes: same model, same `deepinfra/bf16` route, same prices. The generation record of a probe call shows `is_byok: true`.
+- DeepInfra bills the owner directly, and OpenRouter charges nothing on top within its monthly allowance.
+- The spend ledger still prices every call from `configs/prices.yaml`, so the $150 guard covers these calls too.
+- DeepInfra allows 200 concurrent requests per model, so agent runs go from concurrency 4 (chosen because of shared-pool 429s) to 8. Concurrency changes no request and no cache key.
+
+**Consequences.**
+- M4–M6 stay on one model, precision and host.
+- When the key is rate-limited, OpenRouter falls back to the shared pool (the default), and those calls can still 429. The runner retries them as infrastructure failures, never scores them.

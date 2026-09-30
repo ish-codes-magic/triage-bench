@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from triagelab.filelock import exclusive
+
 
 class SpendEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -32,8 +34,10 @@ class SpendLedger:
 
     def record(self, entry: SpendEntry) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as f:
-            f.write(entry.model_dump_json() + "\n")
+        line = (entry.model_dump_json() + "\n").encode("utf-8")
+        # Several runs may write at once: serialise them (see filelock.py for why).
+        with exclusive(self._path), self._path.open("ab") as f:
+            f.write(line)
 
     def entries(self) -> list[SpendEntry]:
         if not self._path.exists():

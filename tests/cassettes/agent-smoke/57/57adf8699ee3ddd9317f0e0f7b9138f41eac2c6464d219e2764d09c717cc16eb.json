@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 2384,
+  "tokens_out": 117,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 93
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-b43f71de49f9cade",
+   "name": "get_issue",
+   "arguments": "{\"number\": 4}"
+  }
+ ],
+ "reasoning_text": "This issue appears to be a documentation typo report, but it's very vague - no specific file, no specific typo, no version info, and the reporter says they \"Cannot reproduce\". This is a pattern I'm seeing with similar issues (4, 12, 16, 20, 24) that all have the same template-like format.\n\nLet me check one of these similar issues to understand the pattern better.\n\n",
+ "cost_usd": 0.00025595,
+ "original_cost_usd": 0.00025595,
+ "cache_hit": false,
+ "latency_ms": 9668,
+ "attempts": 1
+}

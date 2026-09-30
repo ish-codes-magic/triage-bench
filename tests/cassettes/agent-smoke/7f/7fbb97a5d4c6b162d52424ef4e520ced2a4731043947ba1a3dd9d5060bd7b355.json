@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 1849,
+  "tokens_out": 219,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 201
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-830117e152f181a3",
+   "name": "search_similar_issues",
+   "arguments": "{\"query\": \"asyncio pathlib glob event loop task cancel\", \"k\": 10}"
+  }
+ ],
+ "reasoning_text": "The user has submitted an issue that appears to be about asyncio and pathlib glob event loop task cancellation. The issue is very brief and lacks important details. Let me analyze what I need to do:\n\n1. First, I should search for similar issues to see if this is a duplicate\n2. I need to determine the appropriate labels, component, and whether more information is needed\n3. The issue is very vague - \"asyncio pathlib glob event loop task cancel observed in scenario 0. Cannot reproduce, version unknown.\"\n\nThis is clearly a bug report but it's extremely incomplete. The reporter says they \"cannot reproduce\" and \"version unknown\" - this is a major red flag. I should:\n- Search for similar issues first\n- Then decide on triage\n\nLet me search for similar issues with keywords from the issue.\n",
+ "cost_usd": 0.00021775,
+ "original_cost_usd": 0.00021775,
+ "cache_hit": false,
+ "latency_ms": 19253,
+ "attempts": 1
+}

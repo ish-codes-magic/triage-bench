@@ -1,0 +1,24 @@
+{
+ "text": "",
+ "model": "openrouter/qwen/qwen3.5-9b",
+ "resolved_model": "qwen/qwen3.5-9b",
+ "usage": {
+  "tokens_in": 1843,
+  "tokens_out": 196,
+  "cached_tokens_in": 0,
+  "reasoning_tokens": 168
+ },
+ "tool_calls": [
+  {
+   "id": "chatcmpl-tool-875f7bc04047da23",
+   "name": "search_similar_issues",
+   "arguments": "{\"query\": \"segfault refcount dealloc bytecode eval loop\", \"k\": 10}"
+  }
+ ],
+ "reasoning_text": "The user has submitted an issue that appears to be about a segfault problem related to reference counting, deallocation, bytecode, and eval loop. This is a technical issue about Python's internal behavior.\n\nLet me analyze this:\n1. The issue mentions \"segfault\" - this is a crash\n2. It mentions \"refcount dealloc bytecode eval loop\" - this sounds like it's related to the interpreter core\n3. The title is \"segfault problem 130\" - this might be a reference to a specific test case or scenario\n\nI should search for similar issues first to see if this is a duplicate or related to existing reports.\n\nLet me search for similar issues with keywords from the issue.\n",
+ "cost_usd": 0.00021370000000000002,
+ "original_cost_usd": 0.00021370000000000002,
+ "cache_hit": false,
+ "latency_ms": 18947,
+ "attempts": 1
+}

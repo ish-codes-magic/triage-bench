@@ -175,3 +175,49 @@ Reproduce any comparison with `triagelab compare <run_a> <run_b> [--exclude-erro
 **Takeaway.**
 - **A negative result for H1 at this model size:** repository knowledge delivered as a skill, even force-fed, didn't improve a 9B model's triage.
 - **Progressive disclosure assumes a model that decides to read, and then follows what it read.** Qwen3.5-9B did neither reliably. E5 (27B) will show whether that's a size effect.
+
+---
+
+## Iteration 5: a repeat guard makes the agent cheaper, not smarter
+
+- **Date:** 2026-09-30 · **System:** agent, prompt v2 (iteration 3's configuration)
+- **Runs:** A = `20260929-213632-agent-11599c` (iteration 3), B = `20260930-000255-agent-cf734a` (`repeat_guard: true`)
+
+**Observation.**
+- In M4's traces, 9% of tool calls exactly repeated an earlier call, and 39% were near-duplicate queries (same tool, ≥ 50% word overlap).
+- 60 of 100 issues had three or more of them, and about half of all answers were forced by the step budget.
+
+**Change.** The toolbox (`RepeatGuard`) now does three things:
+- answers an exact repeat from history instead of running it;
+- tags a near-duplicate query's result with "this query overlaps an earlier one; if it added nothing new, decide";
+- ends every result with "tool calls used: k of 15".
+
+**Result** (paired bootstrap, 100 issues; B has one genuine `no_answer` fallback, which is scored):
+
+| metric | A | B | Δ [95% CI] | |
+|---|---|---|---|---|
+| T1 micro-F1 | 0.743 | 0.728 | −0.015 [−0.044, +0.015] | no evidence |
+| T2 link F1 | 0.316 | 0.435 | +0.119 [−0.087, +0.342] | no evidence |
+| T3 accuracy | 0.796 | 0.815 | +0.019 [−0.041, +0.088] | no evidence |
+| T4 F1 | 0.160 | 0.083 | −0.077 [−0.250, +0.014] | no evidence |
+| cost per issue | $0.00709 | $0.00645 | **−$0.00064 [−0.00124, −0.00007]** | significant (−9%) |
+| input tokens per issue | 68.1k | 61.4k | **−6.7k [−12.6k, −1.0k]** | significant |
+| tool calls per issue | 9.2 | 9.1 | −0.19 [−0.74, +0.34] | no evidence |
+
+**Behaviour:**
+- 64 of 917 tool calls (7%) were exact repeats answered from history.
+- 270 (29%) got an overlap note.
+- Forced answers: 55 → 48.
+
+**Reading.**
+- **The guard fired constantly, but the model kept rephrasing.** Tool-call counts didn't move.
+- **The savings are real, and they come from not re-sending repeated results**, not from the agent deciding sooner.
+
+**Decision.** Kept in the reference agent: the same accuracy for 9% less.
+
+**Takeaway across iterations 3–5.**
+- **What worked:**
+  - a **schema** change (iteration 3: +0.15 top-3, +0.07 top-1 components);
+  - a **mechanical** harness change (iteration 5: −9% cost).
+- **What didn't:** *telling* the model how to behave, whether through a skill it was made to read (iteration 4) or through in-context notes (iteration 5's overlap notes). Qwen3.5-9B largely ignores process guidance.
+- **Next** (M6/E5): does a larger model follow the same guidance?

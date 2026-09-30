@@ -35,7 +35,7 @@ from triagelab.mcp_server.codeowners import CodeOwners
 from triagelab.retrieval.corpus import NotVisibleError
 from triagelab.retrieval.search import HybridSearcher
 
-# 2 (iteration 7): code hits and owner lookups name the component owning the path.
+# 2 (iteration 6): code hits and owner lookups name the component owning the path.
 TOOLS_VERSION = "2"
 _SNIPPET_CHARS = 300
 _BODY_CHARS = 6000

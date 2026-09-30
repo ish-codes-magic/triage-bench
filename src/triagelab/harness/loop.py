@@ -30,11 +30,16 @@ from triagelab.harness.tools import Toolbox
 from triagelab.harness.tracing import IssueTrace
 from triagelab.llm_client import LLMClient, LLMRequest, Message, ToolCall, ToolSpec
 
-SUBMIT = "submit_triage"
-NUDGE = (
-    "Reply with a tool call. Call submit_triage with your decision now, or another tool "
-    "if you still need information."
-)
+SUBMIT = "submit_triage"  # the default final-answer tool; subagents use their own
+
+
+def nudge(submit_name: str) -> str:
+    return (
+        f"Reply with a tool call. Call {submit_name} with your decision now, or another tool "
+        "if you still need information."
+    )
+
+
 _MAX_FEEDBACK_CHARS = 2_000
 
 
@@ -60,8 +65,8 @@ def inline_schema(model: type[BaseModel]) -> dict[str, Any]:
     return cast(dict[str, Any], resolve(schema))
 
 
-def submit_tool(answer_type: type[BaseModel], description: str) -> ToolSpec:
-    return ToolSpec(name=SUBMIT, description=description, parameters=inline_schema(answer_type))
+def submit_tool(answer_type: type[BaseModel], description: str, name: str = SUBMIT) -> ToolSpec:
+    return ToolSpec(name=name, description=description, parameters=inline_schema(answer_type))
 
 
 @dataclass
@@ -86,7 +91,8 @@ def _validate[A: BaseModel](call: ToolCall, answer_type: type[A]) -> tuple[A | N
         return answer_type.model_validate_json(call.arguments or "{}"), "Accepted."
     except ValidationError as err:
         text = str(err)[:_MAX_FEEDBACK_CHARS]
-        return None, f"Error: invalid {SUBMIT} arguments. Fix them and call {SUBMIT} again.\n{text}"
+        name = call.name
+        return None, f"Error: invalid {name} arguments. Fix them and call {name} again.\n{text}"
 
 
 def run_loop[A: BaseModel](
@@ -135,7 +141,7 @@ def run_loop[A: BaseModel](
             update={
                 "messages": tuple(convo),
                 "tools": tools,
-                "tool_choice": SUBMIT if forced else opening,
+                "tool_choice": submit.name if forced else opening,
             }
         )
         response = client.complete(request)
@@ -157,7 +163,7 @@ def run_loop[A: BaseModel](
             nudged = True
             convo += [
                 Message(role="assistant", content=response.text),
-                Message(role="user", content=NUDGE),
+                Message(role="user", content=nudge(submit.name)),
             ]
             continue
 
@@ -165,7 +171,7 @@ def run_loop[A: BaseModel](
             Message(role="assistant", content=response.text, tool_calls=response.tool_calls)
         )
         for call in response.tool_calls:
-            if call.name == SUBMIT:
+            if call.name == submit.name:
                 if out.answer is not None:
                     reply = "Ignored: an answer was already accepted."
                 else:
@@ -176,7 +182,7 @@ def run_loop[A: BaseModel](
             elif out.answer is not None:
                 reply = "Ignored: an answer was already accepted."
             elif budget.tool_calls_left == 0:
-                reply = f"Error: the tool-call budget is used up. Call {SUBMIT} now."
+                reply = f"Error: the tool-call budget is used up. Call {submit.name} now."
             else:
                 result = toolbox.execute(call)
                 budget.record_tool_call()

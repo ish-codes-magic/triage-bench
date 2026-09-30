@@ -152,6 +152,9 @@ class AgentConfig(_Strict):
     # E3 (tools vs stuffing): when > 0, the top-k similar earlier issues are retrieved by
     # the harness (same MCP search, as of creation) and pasted into the prompt.
     stuff_similar_k: int = Field(default=0, ge=0, le=20)
+    # Iteration 8: topic/OS labels below this confidence are dropped. On dev, the 9B's
+    # topic/OS labels under 0.9 were right 1 time in 25; type and area labels sit at >= 0.9.
+    family_label_min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     # E4: "single" is one agent with every tool. "planner" is a planner call, then a
     # duplicate scout and a code locator (each its own loop with `worker_budget`), then a
     # synthesizer with the skills but no retrieval tools (harness/planner.py).

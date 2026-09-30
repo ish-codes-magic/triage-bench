@@ -143,6 +143,7 @@ class AgentTriager:
         self._components = [c.name for c in profile.components]
         tax = profile.taxonomy
         self._allowed_labels = {*tax.type, *tax.area, *self._family_labels}
+        self._family_label_set = set(self._family_labels)
         self._mcp_infos: list[ToolInfo] = self._select_tools(mcp) if mcp else []
         activate = agent.skill_activation == "first_call" and bool(len(skills))
         self._first_tool_choice = "load_skill" if activate else None
@@ -336,7 +337,13 @@ class AgentTriager:
         a = outcome.answer
         if a is None:
             return base
-        kept = [g for g in a.labels if g.label in self._allowed_labels]
+        floor = self._agent.family_label_min_confidence
+        kept = [
+            g
+            for g in a.labels
+            if g.label in self._allowed_labels
+            and not (g.label in self._family_label_set and g.confidence < floor)
+        ]
         component = a.component if a.component in self._components else None
         # A duplicate's original must be older, and older issues have smaller numbers.
         earlier = [n for n in (a.duplicate_of, *a.duplicate_candidates) if n and n < issue.number]

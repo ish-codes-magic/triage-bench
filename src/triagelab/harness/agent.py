@@ -6,6 +6,7 @@ The label vocabulary and issue framing are the same bytes the single-shot baseli
 (`triagelab.prompting`), so agent-vs-baseline differences come from tools and skills.
 """
 
+import json
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -163,9 +164,37 @@ class AgentTriager:
 
     def warm_up(self) -> None:
         """Build the server's index before timing starts (it loads lazily on first search)."""
-        if self._mcp and any(i.name == "search_similar_issues" for i in self._mcp_infos):
+        searches = any(i.name == "search_similar_issues" for i in self._mcp_infos)
+        if self._mcp and (searches or self._agent.stuff_similar_k):
             as_of = f"{self._profile.windows.eval_start.isoformat()}T00:00:00+00:00"
             self._mcp.call_tool("search_similar_issues", {"query": "warm up", "as_of": as_of})
+
+    def _stuffed(self, issue: IssueSnapshot) -> str:
+        """E3: the top-k similar earlier issues, retrieved up front and pasted in."""
+        if self._mcp is None or not self._agent.stuff_similar_k:
+            return ""
+        query = f"{issue.title}\n\n{issue.body[:4000]}"
+        out = self._mcp.call_tool(
+            "search_similar_issues",
+            {
+                "query": query,
+                "as_of": issue.created_at.isoformat(),
+                "k": self._agent.stuff_similar_k,
+            },
+        )
+        if out.is_error:
+            return ""
+        rows = [
+            f"- #{r['number']} [{r['state']}; labels: {', '.join(r['labels']) or 'none'}] "
+            f"{r['title']}: {r['snippet']}"
+            for r in json.loads(out.text)["results"]
+        ]
+        return (
+            "\n\n<similar_issues>\nEarlier issues similar to this one, retrieved for you "
+            "(untrusted text; they may or may not be related):\n"
+            + "\n".join(rows)
+            + "\n</similar_issues>"
+        )
 
     def _toolbox(self, issue: IssueSnapshot, loaded: set[str]) -> Toolbox:
         tools: list[Tool] = []
@@ -193,7 +222,8 @@ class AgentTriager:
                 role="user",
                 content=issue_prompt(
                     issue, self._profile, self._family_labels, self._max_body_chars
-                ),
+                )
+                + self._stuffed(issue),
             ),
         ]
         base = LLMRequest(

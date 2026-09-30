@@ -51,7 +51,7 @@ def build_agent(
         project=cfg.tracing.project,
     )
     stack.callback(tracer.close)
-    wants_mcp = agent_cfg.tools is None or bool(agent_cfg.tools)
+    wants_mcp = agent_cfg.tools is None or bool(agent_cfg.tools) or agent_cfg.stuff_similar_k > 0
     triager = AgentTriager(
         client=client,
         llm=cfg.llm,

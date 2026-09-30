@@ -145,6 +145,9 @@ class AgentConfig(_Strict):
     # Iteration 5: answer exact repeat calls from history, flag near-duplicate queries,
     # and show the tool budget used after every result (harness/tools.py: RepeatGuard).
     repeat_guard: bool = False
+    # E3 (tools vs stuffing): when > 0, the top-k similar earlier issues are retrieved by
+    # the harness (same MCP search, as of creation) and pasted into the prompt.
+    stuff_similar_k: int = Field(default=0, ge=0, le=20)
     mcp: McpConfig = McpConfig()
 
 

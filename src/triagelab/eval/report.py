@@ -25,13 +25,15 @@ from triagelab.triage import TriageResult
 
 Labels = Literal["silver", "gold"]
 
+# T4 (needs-info) is scored in every scorecard but kept out of the headline table:
+# adjudication showed its silver labels track CPython's `pending` label, not missing
+# information (ADR-0036).
 HEADLINE = (
     "t1_micro_f1",
     "t1_area_micro_f1",
     "t2_link_f1",
     "t3_accuracy",
     "t3_top3_accuracy",
-    "t4_f1",
 )
 
 
@@ -92,9 +94,9 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
     rows = sorted(latest.values(), key=lambda r: r.name)
     header = (
         "| experiment | system | T1 micro-F1 | T1 area F1 | T2 link F1 | T3 acc | T3 top-3 | "
-        "T4 F1 | $/issue | p50 latency |"
+        "$/issue | p50 latency |"
     )
-    lines = [header, "|" + "---|" * 10]
+    lines = [header, "|" + "---|" * 9]
     for r in rows:
         cells = " | ".join(_cell(r.metrics.get(m)) for m in HEADLINE)
         lines.append(

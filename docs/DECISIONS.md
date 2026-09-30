@@ -721,3 +721,17 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - M5's numbers are available now, honestly labeled.
 - A human spot-check of about 20 issues would put a number on the reliability of the model labels. It's recommended, but optional.
 - A threat to validity is recorded: labels from an LLM may favour LLM-shaped answers, which could flatter the LLM systems relative to TF-IDF.
+
+## ADR-0036: T4 (needs-info) leaves the headline metrics
+
+**Context.**
+- T4's silver label is "a human applied `pending`" (§7.3).
+- Adjudicating the 97 usable dev issues flagged **none** as needing information, where silver flagged 15 (κ = 0.00). `pending` in CPython means "awaiting a maintainer decision" or "closing unless someone objects".
+- With zero adjudicated positives, T4 F1 is undefined on gold, and on silver it measures agreement with a process label.
+
+**Decision.**
+- T4 is still predicted and scored in every scorecard, but it's out of the headline results table and the README.
+- Silver T4 numbers are described as "predicts `pending`".
+- A valid needs-info task needs a different derivation. One option is maintainer comments that ask the reporter for information, before any reply. That's future work, re-checked with the same adjudication.
+
+**Consequences.** No headline claim rests on a label that doesn't mean what its name says. The T4 infrastructure (metrics, the `needs_info` field) stays for the re-derivation and for the transfer repo, whose needs-info label may be valid.

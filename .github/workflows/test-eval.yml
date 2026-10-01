@@ -97,7 +97,7 @@ jobs:
           {
             echo "### Test-set evaluation: \`$SESSION\`"
             echo
-            uv run triagelab results --split test --out-dir "$RUNNER_TEMP/results"
+            uv run triagelab results --split test --profile "$PROFILE" --out-dir "$RUNNER_TEMP/results"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the runs and the audit log

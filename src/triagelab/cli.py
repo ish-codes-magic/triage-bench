@@ -322,6 +322,10 @@ def results(
     name: Annotated[
         str | None, typer.Option(help="Prefix for the output file, e.g. 'uv' -> uv-test.md.")
     ] = None,
+    repo_profile: Annotated[
+        Path | None,
+        typer.Option("--profile", "-p", help="Repository profile (default: the config's)."),
+    ] = None,
 ) -> None:
     """Write the results table (latest run per experiment, on the config's repository) to
     reports/results/[<name>-]<split>.md."""
@@ -335,6 +339,10 @@ def results(
     if labels not in ("silver", "gold"):
         raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
+    if repo_profile is not None:
+        cfg = cfg.model_copy(
+            update={"dataset": cfg.dataset.model_copy(update={"profile": repo_profile})}
+        )
     profile = load_profile(cfg.dataset.profile)
     runs = load_scored_runs(cfg.paths.runs_dir)
     # One repository per table: keep the runs made on this config's dataset.

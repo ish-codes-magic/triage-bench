@@ -230,9 +230,10 @@ def eval_cmd(
     config: Annotated[Path, typer.Option("--config", "-c", help="Experiment config YAML.")],
     split: Annotated[str, typer.Option(help="dev | test | train")] = "dev",
     limit: Annotated[int | None, typer.Option(help="Only the first N issues.")] = None,
-    allow_test: Annotated[
-        bool, typer.Option("--allow-test", help="Unlock the test split (max twice, logged).")
-    ] = False,
+    session: Annotated[
+        Path | None,
+        typer.Option("--session", help="The frozen test session this run belongs to (test only)."),
+    ] = None,
     resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
     otlp_endpoint: Annotated[
         str | None,
@@ -245,7 +246,8 @@ def eval_cmd(
 ) -> None:
     """Run an experiment on a split and print its scorecard (with 95% bootstrap CIs)."""
     from triagelab.data.splits import parse_split
-    from triagelab.eval.runner import TestSetLockedError, run_eval
+    from triagelab.eval.runner import run_eval
+    from triagelab.eval.test_session import TestSetLockedError
 
     try:
         split_name = parse_split(split)
@@ -264,7 +266,7 @@ def eval_cmd(
             command=f"eval --config {config.as_posix()} --split {split}",
             log=typer.echo,
             limit=limit,
-            allow_test=allow_test,
+            session=session,
             resume_dir=resume,
         )
     except TestSetLockedError as err:
@@ -1068,3 +1070,73 @@ def cascade(
     out.write_bytes(text.encode())
     _echo_report(text)
     typer.echo(f"written to {out.as_posix()}")
+
+
+session_app = typer.Typer(help="Frozen test-set evaluation sessions.", no_args_is_help=True)
+app.add_typer(session_app, name="test-session")
+
+
+@session_app.command("freeze")
+def session_freeze(
+    profile_path: ProfileOpt,
+    configs: Annotated[list[Path], typer.Option("--config", "-c", help="A config to evaluate.")],
+    note: Annotated[str, typer.Option(help="Why this session exists.")] = "",
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Declare a test evaluation: the configs, the code they run on, and the dataset.
+
+    Commit the file it writes before running anything. At most two sessions per repository.
+    """
+    import json
+
+    from triagelab.data.build import dataset_paths
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.test_session import TestSetLockedError, freeze
+
+    cfg = load_config(config)
+    profile = load_profile(profile_path)
+    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
+    dataset_hash = str(json.loads(report.read_text(encoding="utf-8"))["dataset_hash"])
+    try:
+        out = freeze(
+            repo=profile.repo,
+            slug=profile.slug,
+            config_paths=configs,
+            dataset_hash=dataset_hash,
+            note=note,
+        )
+    except TestSetLockedError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=3) from err
+    typer.echo(f"frozen: {out.as_posix()} ({len(configs)} configs)")
+
+
+@session_app.command("run")
+def session_run(
+    session: Annotated[Path, typer.Argument(help="A committed session file.")],
+) -> None:
+    """Evaluate every config of a session on the test split, once each."""
+    from triagelab.eval.runner import run_eval
+    from triagelab.eval.test_session import TestSetLockedError, load_session
+
+    load_dotenv()
+    frozen = load_session(session)
+    for item in frozen.configs:
+        cfg = load_config(Path(item.path))
+        typer.echo(f"== {item.name} ({item.path})")
+        try:
+            outcome = run_eval(
+                cfg,
+                split="test",
+                runs_dir=cfg.paths.runs_dir,
+                command=f"test-session run {session.as_posix()}",
+                log=typer.echo,
+                session=session,
+            )
+        except TestSetLockedError as err:
+            typer.echo(str(err), err=True)
+            raise typer.Exit(code=3) from err
+        typer.echo(f"run {outcome.run_id}: {outcome.completed}/{outcome.total} issues")
+        if outcome.stopped_reason:
+            typer.echo(f"stopped: {outcome.stopped_reason}", err=True)
+            raise typer.Exit(code=2)

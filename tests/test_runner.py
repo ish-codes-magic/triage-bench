@@ -22,7 +22,8 @@ from triagelab.eval.report import (
     rescore_on_gold,
     results_table,
 )
-from triagelab.eval.runner import RunOutcome, TestSetLockedError, run_eval
+from triagelab.eval.runner import RunOutcome, run_eval
+from triagelab.eval.test_session import TestSetLockedError
 from triagelab.labeling.gold import Decision, GoldRecord, GoldStore, gold_path
 from triagelab.llm_client import LLMClient
 from triagelab.triage import TriageResult
@@ -72,7 +73,8 @@ def _run(
     split: Split = "dev",
     *,
     limit: int | None = None,
-    allow_test: bool = False,
+    session: Path | None = None,
+    sessions_root: Path = Path(),
     resume_dir: Path | None = None,
 ) -> RunOutcome:
     return run_eval(
@@ -82,7 +84,8 @@ def _run(
         command="test",
         log=lambda _: None,
         limit=limit,
-        allow_test=allow_test,
+        session=session,
+        sessions_root=sessions_root,
         resume_dir=resume_dir,
     )
 
@@ -155,14 +158,9 @@ def test_resume_only_runs_missing_issues(workspace: Path, fake_llm: FakeBackend)
     assert len(read_jsonl(first.run_dir / "predictions.jsonl", TriageResult)) == 5
 
 
-def test_test_split_is_locked_and_capped(workspace: Path) -> None:
-    cfg = _config(workspace, "majority")
+def test_the_test_split_is_locked_without_a_session(workspace: Path) -> None:
     with pytest.raises(TestSetLockedError, match="locked"):
-        _run(cfg, split="test")
-    _run(cfg, split="test", allow_test=True)
-    _run(cfg, split="test", allow_test=True)
-    with pytest.raises(TestSetLockedError, match="2 times"):
-        _run(cfg, split="test", allow_test=True)
+        _run(_config(workspace, "majority"), split="test")
 
 
 def test_results_table_and_compare(workspace: Path) -> None:

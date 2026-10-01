@@ -967,13 +967,17 @@ def gate_pack(
     profile_path: ProfileOpt,
     data_dir: DataDirOpt = Path("data"),
     out: Annotated[Path, typer.Option("--out")] = Path("dist/evalpack.tar.gz"),
+    with_test: Annotated[
+        bool,
+        typer.Option("--with-test", help="A test pack: everything, for a frozen test session."),
+    ] = False,
 ) -> None:
-    """Pack the dataset tables (no test rows) and the retrieval index for CI."""
+    """Pack the dataset tables and the retrieval index for CI (no test period by default)."""
     from triagelab.data.evalpack import build_pack
     from triagelab.data.profile import load_profile
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    manifest = build_pack(data_dir, load_profile(profile_path), out)
+    manifest = build_pack(data_dir, load_profile(profile_path), out, include_test=with_test)
     size = out.stat().st_size / 1e6
     typer.echo(f"{len(manifest.files)} files, splits {manifest.splits}, {size:.1f} MB -> {out}")
 
@@ -983,13 +987,20 @@ def gate_unpack(
     archive: Annotated[Path, typer.Argument(help="An eval pack (.tar.gz).")],
     profile_path: ProfileOpt,
     data_dir: DataDirOpt = Path("data"),
+    allow_test: Annotated[
+        bool,
+        typer.Option("--allow-test", help="Accept a test pack (the test-eval workflow only)."),
+    ] = False,
 ) -> None:
-    """Unpack and verify an eval pack; refuses anything from the test period."""
+    """Unpack and verify an eval pack; refuses anything from the test period unless
+    --allow-test."""
     from triagelab.data.evalpack import PackError, extract_pack
     from triagelab.data.profile import load_profile
 
     try:
-        manifest = extract_pack(archive, data_dir, load_profile(profile_path))
+        manifest = extract_pack(
+            archive, data_dir, load_profile(profile_path), allow_test=allow_test
+        )
     except PackError as err:
         typer.echo(f"eval pack rejected: {err}", err=True)
         raise typer.Exit(code=1) from err

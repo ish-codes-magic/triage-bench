@@ -9,12 +9,18 @@ into `data/`:
   index/<slug>/               the retrieval corpus and its embeddings, cut at the start of
                               the test period
 
-Nothing from the test period is packed: no table rows, and no corpus documents, whose
-label histories would amount to the test labels. The gate evaluates dev issues only, and
-the as_of guard never shows an issue created after the one being triaged, so the cut loses
-nothing. Unpacking re-checks both cuts against the repository's own profile rather than
-trusting the pack's manifest (AGENTS.md §12.8). The source checkout isn't packed: CI
-downloads the same frozen commit with `triagelab data checkout`; gold labels are in git.
+By default nothing from the test period is packed: no table rows, and no corpus
+documents, whose label histories would amount to the test labels. The gate evaluates dev
+issues only, and the as_of guard never shows an issue created after the one being
+triaged, so the cut loses nothing. Unpacking re-checks both cuts against the repository's
+own profile rather than trusting the pack's manifest (AGENTS.md §12.8).
+
+A *test pack* (`include_test=True`) carries everything. It is built only when a frozen
+test session is about to run, and only the test-eval workflow unpacks it
+(`allow_test=True`).
+
+The source checkout isn't packed: CI downloads the same frozen commit with
+`triagelab data checkout`; gold labels are in git.
 """
 
 import hashlib
@@ -41,7 +47,8 @@ class PackManifest(BaseModel):
     version: int
     repo: str
     splits: list[str]  # the splits whose rows are in the tables
-    history_cutoff: date  # no corpus document was created on or after this day
+    # No corpus document was created on or after this day; None in a test pack.
+    history_cutoff: date | None
     files: dict[str, str]  # path relative to data_dir -> sha256
 
 
@@ -70,14 +77,15 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _stage_index(data_dir: Path, profile: RepoProfile, stage: Path) -> None:
-    """Copy the index into `stage` without any document from the test period."""
+def _stage_index(
+    data_dir: Path, profile: RepoProfile, stage: Path, cutoff: datetime | None
+) -> None:
+    """Copy the index into `stage`, without documents created at or after `cutoff`."""
     src = index_dir(data_dir, profile)
     dst = stage / src.relative_to(data_dir)
     dst.mkdir(parents=True)
-    cutoff = _cutoff(profile)
     with corpus_path(data_dir, profile).open(encoding="utf-8") as fin:
-        lines = [line for line in fin if _created(json.loads(line)) < cutoff]
+        lines = [line for line in fin if cutoff is None or _created(json.loads(line)) < cutoff]
     kept = {int(json.loads(line)["number"]) for line in lines}
     (dst / "corpus.jsonl").write_bytes("".join(lines).encode("utf-8"))
     for f in sorted(p for p in src.rglob("*") if p.is_file()):
@@ -100,17 +108,20 @@ def _stage_index(data_dir: Path, profile: RepoProfile, stage: Path) -> None:
             raise PackError(f"unexpected file in the index: {rel.as_posix()}")
 
 
-def build_pack(data_dir: Path, profile: RepoProfile, out: Path) -> PackManifest:
-    """Write `out` (.tar.gz): tables and index without the test period, and a manifest."""
+def build_pack(
+    data_dir: Path, profile: RepoProfile, out: Path, *, include_test: bool = False
+) -> PackManifest:
+    """Write `out` (.tar.gz): the tables, the index and a manifest; without the test
+    period unless `include_test`."""
     paths = dataset_paths(data_dir, data_dir, profile)
     assignments = read_parquet(paths.splits)
-    kept = {r["number"] for r in assignments if not _is_test(r["split"])}
+    kept = {r["number"] for r in assignments if include_test or not _is_test(r["split"])}
     with tempfile.TemporaryDirectory() as tmp, tarfile.open(out, "w:gz") as tar:
         stage = Path(tmp)
         for table in (paths.snapshots, paths.silver, paths.splits):
             rows = [r for r in read_parquet(table) if r["number"] in kept]
             write_parquet(stage / table.relative_to(data_dir), rows)
-        _stage_index(data_dir, profile, stage)
+        _stage_index(data_dir, profile, stage, None if include_test else _cutoff(profile))
         files: dict[str, str] = {}
         for f in sorted(p for p in stage.rglob("*") if p.is_file()):
             rel = f.relative_to(stage).as_posix()
@@ -120,7 +131,7 @@ def build_pack(data_dir: Path, profile: RepoProfile, out: Path) -> PackManifest:
             version=PACK_VERSION,
             repo=profile.repo,
             splits=sorted({r["split"] for r in assignments if r["number"] in kept}),
-            history_cutoff=profile.windows.test_start,
+            history_cutoff=None if include_test else profile.windows.test_start,
             files=files,
         )
         data = manifest.model_dump_json(indent=2).encode("utf-8")
@@ -130,9 +141,11 @@ def build_pack(data_dir: Path, profile: RepoProfile, out: Path) -> PackManifest:
     return manifest
 
 
-def extract_pack(archive: Path, data_dir: Path, profile: RepoProfile) -> PackManifest:
-    """Unpack into `data_dir`, verify checksums, and re-check the test-period cut against
-    `profile` (not against the manifest's own claims)."""
+def extract_pack(
+    archive: Path, data_dir: Path, profile: RepoProfile, *, allow_test: bool = False
+) -> PackManifest:
+    """Unpack into `data_dir` and verify checksums. Unless `allow_test`, re-check the
+    test-period cut against `profile` (not against the manifest's own claims)."""
     with tarfile.open(archive) as tar:
         # filter="data" rejects absolute paths, "..", and links out of the tree.
         tar.extractall(data_dir, filter="data")
@@ -148,6 +161,8 @@ def extract_pack(archive: Path, data_dir: Path, profile: RepoProfile) -> PackMan
     ]
     if bad:
         raise PackError(f"{len(bad)} files are missing or fail their checksum, e.g. {bad[0]}")
+    if allow_test:
+        return manifest
     splits = {r["split"] for r in read_parquet(dataset_paths(data_dir, data_dir, profile).splits)}
     if any(_is_test(s) for s in splits | set(manifest.splits)):
         raise PackError("this pack contains test-split rows; the gate refuses it")

@@ -1001,13 +1001,16 @@ def deltas(
     config: ConfigOpt = DEFAULT_CONFIG,
 ) -> None:
     """Paired-bootstrap deltas for a declared set of comparisons; writes <spec>-<labels>.md."""
-    from triagelab.eval.report import DeltaSpec, deltas_table
+    from triagelab.eval.report import DeltaSpec, deltas_table, failure_table
 
     if labels not in ("silver", "gold"):
         raise typer.BadParameter("labels must be silver or gold")
     spec = DeltaSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
     cfg = load_config(config)
     table = deltas_table(spec, cfg.paths.runs_dir, _labels(labels))
+    failures = failure_table(spec, cfg.paths.runs_dir) if labels == "gold" else None
+    if failures:
+        table += f"\n## Failure categories\n\n{failures}"
     out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
     out.write_bytes(f"# {spec.title} ({labels} labels)\n\n{table}".encode())
     typer.echo(table)

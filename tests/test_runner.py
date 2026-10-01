@@ -271,3 +271,26 @@ def test_a_declared_deltas_table(workspace: Path) -> None:
     assert "| b vs ref | +0.000 [+0.000, +0.000] |" in table
     with pytest.raises(ValueError, match="unknown metrics"):
         deltas_table(spec.model_copy(update={"metrics": ["nope"]}), workspace / "runs", "silver")
+
+
+def test_failure_table_lists_tagged_runs_only(workspace: Path) -> None:
+    from triagelab.data.storage import write_parquet
+    from triagelab.eval.report import failure_table
+
+    a = _run(_config(workspace, "majority", name="e-a")).run_id
+    b = _run(_config(workspace, "majority", name="e-b")).run_id
+    spec = DeltaSpec(
+        title="t", reference=a, metrics=["t1_micro_f1"],
+        comparisons=[Comparison(name="E9: b", a="reference", b=b)],
+    )  # fmt: skip
+    assert failure_table(spec, workspace / "runs") is None
+    rows = [
+        {"issue_ref": "o/r#1", "categories": ["x", "y"]},
+        {"issue_ref": "o/r#2", "categories": ["x"]},
+    ]
+    write_parquet(workspace / "runs" / b / "failures.parquet", rows)
+    table = failure_table(spec, workspace / "runs")
+    assert table is not None
+    assert "| run | failing issues | x | y |" in table
+    assert f"| E9 (`{b[-6:]}`) | 2 | 2 | 1 |" in table
+    assert "reference" not in table.split("\n\n")[0]  # untagged runs are left out

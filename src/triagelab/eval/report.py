@@ -4,6 +4,7 @@ AGENTS.md §16: every reported number is regenerated from runs/, never typed by 
 """
 
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -14,9 +15,10 @@ from pydantic import BaseModel
 from triagelab.config import Config
 from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split, parse_split
-from triagelab.data.storage import read_jsonl
+from triagelab.data.storage import read_jsonl, read_parquet
 from triagelab.eval.bootstrap import paired_bootstrap
 from triagelab.eval.dataset import EvalExample, load_split
+from triagelab.eval.failure_tagger import FAILURES_FILE
 from triagelab.eval.gold_labels import human_predictions, with_gold
 from triagelab.eval.registry import RunManifest
 from triagelab.eval.score import METRICS, MetricScore, SystemStats, align, score, statistic
@@ -328,5 +330,41 @@ def deltas_table(spec: DeltaSpec, runs_dir: Path, labels: Labels) -> str:
         f"{labels.capitalize()} labels. Paired bootstrap over the issues both runs answered "
         "(1,000 resamples); **bold** = the 95% interval excludes 0. "
         f"Reference: `{spec.reference}`.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def failure_table(spec: DeltaSpec, runs_dir: Path, top: int = 6) -> str | None:
+    """Failure-category counts (LLM tagger) for every tagged run in the spec, or None."""
+    named: dict[str, str] = {spec.reference: "reference"}
+    for c in spec.comparisons:
+        for run_id in (c.a, c.b):
+            if run_id != "reference":
+                named.setdefault(run_id, c.name.split(":")[0] if ":" in c.name else c.name)
+    counts: dict[str, Counter[str]] = {}
+    failing: dict[str, int] = {}
+    for run_id in named:
+        path = runs_dir / run_id / FAILURES_FILE
+        if path.is_file():
+            rows = read_parquet(path)
+            counts[run_id] = Counter(cat for r in rows for cat in r["categories"])
+            failing[run_id] = len(rows)
+    if not counts:
+        return None
+    total: Counter[str] = Counter()
+    for c in counts.values():
+        total += c
+    cats = [cat for cat, _ in total.most_common(top)]
+    lines = [
+        f"| run | failing issues | {' | '.join(cats)} |",
+        "|---|---|" + "---|" * len(cats),
+    ]
+    for run_id, c in counts.items():
+        cells = " | ".join(str(c[cat]) for cat in cats)
+        lines.append(f"| {named[run_id]} (`{run_id[-6:]}`) | {failing[run_id]} | {cells} |")
+    lines += [
+        "",
+        "Failure categories from the LLM tagger against the adjudicated labels "
+        "(docs/FAILURE_TAXONOMY.md; categories with tagger kappa < 0.6 are unvalidated).",
     ]
     return "\n".join(lines) + "\n"

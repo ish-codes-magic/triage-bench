@@ -900,3 +900,24 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - E6 compares like with like: same model, route, prompt state and thinking setting for the two LLM arms.
 - The answer format still differs (an option name vs a letter), and that alone moved component accuracy (silver 0.82 vs 0.69). The comparison has to report accuracy as well as calibration.
 - A future Jev backend only implements `DecisionBackend`.
+
+## ADR-0043: The cascade is evaluated offline, at two granularities, with cross-fitted thresholds
+
+**Context.**
+- §11 asks for a cascade: accept a cheap answer when its confidence is at least τ, otherwise escalate to the full agent.
+- τ is picked on dev, and the result is reported as a curve of accuracy vs. share escalated vs. cost.
+- The owner chose the stuffed agent (E3) as the cheap tier, on 2026-10-01.
+- E6 showed that some single decisions are answered better by a one-call backend than by the agent.
+
+**Decision.**
+- **Offline and exact.** Every tier's answers are stored predictions, so a cascade at any τ is a recombination of runs (`decisions/cascade.py`): no model calls, no sampling noise between the tiers.
+- **Issue level (E7):** the stuffed agent triages every issue, and the issue escalates to the full agent when the gate is unsure.
+  - **Self gate:** the cheap tier's own min(type-label, component) confidence.
+  - **Agreement gate:** a decision backend's min confidence when its type *and* component agree with the cheap tier, otherwise 0. A backend's confidence describes its own answer, so disagreement is the escalation signal.
+- **Decision level (H3):** a backend answers a single question, and the agent's answer is used when the backend's confidence is below τ.
+- **Choosing τ:** the cheapest τ whose metrics stay at the full agent's level on dev (tolerance 0, ties to the larger τ). It's reported both as chosen on all of dev and **2-fold cross-fitted** (each half routed by the τ chosen on the other half); the cross-fitted row is the honest estimate.
+- **A live cascade triager is deferred to M9.** It's needed for the demo, not for the measurement. Running two MCP-backed agents at once doubles memory on the development machine.
+
+**Consequences.**
+- Every cascade number is reproducible from the run registry (`triagelab cascade reports/cascade/e7.yaml`).
+- The decision-level result (a $0.15-per-1,000 call matching the agent on type and component) is the strongest evidence for H3. Whether to *deploy* decisions that way, with the agent kept for labels, duplicates and the comment, is a design question for M8/M9.

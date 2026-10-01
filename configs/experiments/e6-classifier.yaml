@@ -1,0 +1,7 @@
+# E6 (decision backends, H3/H5): logistic regression on arctic-embed-s vectors of the same
+# issue text, one head per question, trained on the silver train split. No model calls.
+extends: ../base.yaml
+name: e6-classifier
+system:
+  kind: decisions
+  decisions: {backend: classifier}

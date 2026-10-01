@@ -1,0 +1,16 @@
+# E7: the stuffed agent (E3) answers every issue; uncertain issues go to the full agent.
+# Regenerate with: triagelab cascade reports/cascade/e7.yaml --labels gold
+title: "E7: cascade, stuffed agent -> full agent, dev"
+cheap: 20261001-000322-e3-stuffed-c7868d
+full: 20260930-233640-agent-1f32af
+metrics: [t1_micro_f1, t3_accuracy]
+tolerance: 0.0
+gates:
+  self-confidence: {kind: self}
+  agrees with LLM (logprobs): {kind: agreement, run: 20261001-075558-e6-llm-logprobs-f968e2}
+  agrees with LLM (verbalized): {kind: agreement, run: 20261001-075558-e6-llm-verbalized-ddb893}
+  agrees with classifier: {kind: agreement, run: 20261001-073202-e6-classifier-8d261e}
+decision_backends:
+  LLM (logprobs): 20261001-075558-e6-llm-logprobs-f968e2
+  LLM (verbalized): 20261001-075558-e6-llm-verbalized-ddb893
+  classifier: 20261001-073202-e6-classifier-8d261e

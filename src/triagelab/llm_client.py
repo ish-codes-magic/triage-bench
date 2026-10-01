@@ -103,10 +103,13 @@ class LLMRequest(BaseModel):
     tools: tuple[ToolSpec, ...] = ()
     # None = provider default ("auto"); "none" = no tools; any other value forces that tool.
     tool_choice: str | None = None
+    # Ask for the k most likely alternatives at each generated token (M7: confidence from
+    # the first token's distribution). Omitted from the cache key when unset.
+    top_logprobs: int | None = Field(default=None, ge=1, le=20)
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        return _omit_empty(handler(self), "tools", "tool_choice")
+        return _omit_empty(handler(self), "tools", "tool_choice", "top_logprobs")
 
     def price_key(self) -> str:
         """The price-table key: the model, plus the pinned provider when there is one.
@@ -117,6 +120,13 @@ class LLMRequest(BaseModel):
 
     def cache_key(self) -> str:
         return stable_hash({"v": CACHE_FORMAT_VERSION, **self.model_dump(mode="json")})
+
+
+class TokenLogprob(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    token: str
+    logprob: float
 
 
 class Completion(BaseModel):
@@ -130,6 +140,8 @@ class Completion(BaseModel):
     litellm_cost_usd: float | None = None
     tool_calls: tuple[ToolCall, ...] = ()
     reasoning_text: str = ""  # the model's visible thinking, kept for traces
+    # The alternatives at the first generated token, when `top_logprobs` was requested.
+    first_token_logprobs: tuple[TokenLogprob, ...] = ()
 
 
 class LLMResponse(BaseModel):
@@ -141,6 +153,7 @@ class LLMResponse(BaseModel):
     usage: Usage
     tool_calls: tuple[ToolCall, ...] = ()
     reasoning_text: str = ""
+    first_token_logprobs: tuple[TokenLogprob, ...] = ()
     cost_usd: float = Field(description="Money spent by *this* call: 0.0 on a cache hit.")
     original_cost_usd: float = Field(description="What the response cost when first produced.")
     cache_hit: bool
@@ -319,6 +332,7 @@ class LLMClient:
             usage=completion.usage,
             tool_calls=completion.tool_calls,
             reasoning_text=completion.reasoning_text,
+            first_token_logprobs=completion.first_token_logprobs,
             cost_usd=spent,
             original_cost_usd=spent,
             cache_hit=False,

@@ -830,10 +830,14 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - **Why thresholds apply to point estimates, not CIs:** on 50 issues a real 5-point drop is rarely significant, so a CI-based gate would almost never fire. The CI is printed next to every delta for the reviewer.
 - **Data:** an **eval pack** (`triagelab gate pack`, about 29 MB) holds:
   - the dataset tables with every test-period row removed (the test sample and its reserve);
-  - the retrieval index;
+  - the retrieval index, cut at the start of the test period;
   - a SHA-256 manifest.
 
-  `gate unpack` verifies each file and refuses a pack that claims test rows. The source checkout is re-downloaded at the frozen commit, and the gold labels are in git.
+  The source checkout is re-downloaded at the frozen commit, and the gold labels are in git.
+- **Correction, before the first publish (2026-10-01):**
+  - The first pack cut the tables but shipped the *whole* retrieval corpus. That's every issue up to `eval_end`, test-period issues included, each with its label history, which amounts to the test labels, in a public repository.
+  - The pack (version 2) now also drops every corpus document and embedding created on or after `test_start`. That loses nothing: the gate triages dev issues, and `as_of` never shows a later issue.
+  - `gate unpack` re-checks both cuts against the repository's own profile instead of trusting the manifest, and refuses unknown index files.
 - **Workflow (`eval.yml`):**
   - Triggers: the `run-eval` PR label, or a manual dispatch.
   - The `eval` environment requires owner approval and holds the API key. Fork PRs are excluded, and `pull_request_target` is never used.
@@ -867,3 +871,53 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - M4–M6 stay on one model, precision and host.
 - When the key is rate-limited, OpenRouter falls back to the shared pool (the default), and those calls can still 429. The runner retries them as infrastructure failures, never scores them.
+
+## ADR-0042: Decision backends for E6: an LLM with two confidence sources, and a classifier
+
+**Context.**
+- §11 asks for typed decisions answered by Jev, an LLM and a classifier, compared on accuracy, calibration, cost and latency (E6).
+- The owner has no Jev access (`jev_access: no`, 2026-10-01).
+- The decisions must have reference answers on dev to be measurable.
+
+**Decision.**
+- **Questions:** two single-choice decisions:
+  - the issue's **type label** (5 options; training and scoring only where the labels name exactly one type);
+  - its **component** (the profile's map, with prefixes in the question).
+- **State:** every backend gets the same text, the `<issue>` block the agent sees.
+- **Backends** (`decisions/`):
+  - **LLM, verbalized:** a JSON reply restricted to the options (enum schema), plus a stated probability.
+  - **LLM, logprobs:** the options are lettered and the reply is one letter. The confidence is the first-token probability mass on each option's letter, with variants pooled and the result renormalised over the options.
+  - Thinking is **off** for both LLM arms, so the answer is the first token and the two arms differ only in where the confidence comes from.
+  - **Classifier:** logistic regression (one head per question) on arctic-embed-s vectors of the same issue text, trained on the silver train split, with embeddings cached on disk.
+- **No TypeSafe adapter:** without Jev access it would only add a dependency that hides the confidence computation §1.3 asks us to write.
+- **Route:** both LLM arms run Qwen3.5-9B on **Venice fp8**.
+  - Logprobs need a provider that serves them: only Parasail (bf16) and Venice (fp8) do.
+  - Parasail's shared OpenRouter pool answered 90% of calls with 429 on 2026-10-01.
+  - On a probe, Venice's first-token distribution matched Parasail's to within about 0.1 nats per option.
+  - These backends are separate systems from the bf16 agent, and the precision is recorded.
+
+**Consequences.**
+- E6 compares like with like: same model, route, prompt state and thinking setting for the two LLM arms.
+- The answer format still differs (an option name vs a letter), and that alone moved component accuracy (silver 0.82 vs 0.69). The comparison has to report accuracy as well as calibration.
+- A future Jev backend only implements `DecisionBackend`.
+
+## ADR-0043: The cascade is evaluated offline, at two granularities, with cross-fitted thresholds
+
+**Context.**
+- §11 asks for a cascade: accept a cheap answer when its confidence is at least τ, otherwise escalate to the full agent.
+- τ is picked on dev, and the result is reported as a curve of accuracy vs. share escalated vs. cost.
+- The owner chose the stuffed agent (E3) as the cheap tier, on 2026-10-01.
+- E6 showed that some single decisions are answered better by a one-call backend than by the agent.
+
+**Decision.**
+- **Offline and exact.** Every tier's answers are stored predictions, so a cascade at any τ is a recombination of runs (`decisions/cascade.py`): no model calls, no sampling noise between the tiers.
+- **Issue level (E7):** the stuffed agent triages every issue, and the issue escalates to the full agent when the gate is unsure.
+  - **Self gate:** the cheap tier's own min(type-label, component) confidence.
+  - **Agreement gate:** a decision backend's min confidence when its type *and* component agree with the cheap tier, otherwise 0. A backend's confidence describes its own answer, so disagreement is the escalation signal.
+- **Decision level (H3):** a backend answers a single question, and the agent's answer is used when the backend's confidence is below τ.
+- **Choosing τ:** the cheapest τ whose metrics stay at the full agent's level on dev (tolerance 0, ties to the larger τ). It's reported both as chosen on all of dev and **2-fold cross-fitted** (each half routed by the τ chosen on the other half); the cross-fitted row is the honest estimate.
+- **A live cascade triager is deferred to M9.** It's needed for the demo, not for the measurement. Running two MCP-backed agents at once doubles memory on the development machine.
+
+**Consequences.**
+- Every cascade number is reproducible from the run registry (`triagelab cascade reports/cascade/e7.yaml`).
+- The decision-level result (a $0.15-per-1,000 call matching the agent on type and component) is the strongest evidence for H3. Whether to *deploy* decisions that way, with the agent kept for labels, duplicates and the comment, is a design question for M8/M9.

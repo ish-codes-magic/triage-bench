@@ -6,11 +6,15 @@ into `data/`:
 
   snapshots, splits, silver   the three dataset tables, without test-period rows
                               (the test sample and its reserve)
-  index/<slug>/               the retrieval corpus and its embeddings (as_of-guarded history)
+  index/<slug>/               the retrieval corpus and its embeddings, cut at the start of
+                              the test period
 
-Test rows are dropped at packing time, so no workflow that uses the pack can reach the
-test split (AGENTS.md §12.8). The source checkout isn't packed: CI downloads the same frozen
-commit with `triagelab data checkout`, and the gold labels are already in git.
+Nothing from the test period is packed: no table rows, and no corpus documents, whose
+label histories would amount to the test labels. The gate evaluates dev issues only, and
+the as_of guard never shows an issue created after the one being triaged, so the cut loses
+nothing. Unpacking re-checks both cuts against the repository's own profile rather than
+trusting the pack's manifest (AGENTS.md §12.8). The source checkout isn't packed: CI
+downloads the same frozen commit with `triagelab data checkout`; gold labels are in git.
 """
 
 import hashlib
@@ -18,16 +22,18 @@ import io
 import json
 import tarfile
 import tempfile
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
+import numpy as np
 from pydantic import BaseModel
 
 from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile
 from triagelab.data.storage import read_parquet, write_parquet
-from triagelab.retrieval.index import index_dir
+from triagelab.retrieval.index import corpus_path, index_dir
 
-PACK_VERSION = 1
+PACK_VERSION = 2  # 2: the retrieval corpus is cut at the test period
 MANIFEST = "evalpack.json"
 
 
@@ -35,12 +41,25 @@ class PackManifest(BaseModel):
     version: int
     repo: str
     splits: list[str]  # the splits whose rows are in the tables
+    history_cutoff: date  # no corpus document was created on or after this day
     files: dict[str, str]  # path relative to data_dir -> sha256
+
+
+class PackError(Exception):
+    pass
 
 
 def _is_test(split: str) -> bool:
     """The test sample and its reserve pool: every test-period issue."""
     return split.startswith("test")
+
+
+def _cutoff(profile: RepoProfile) -> datetime:
+    return datetime.combine(profile.windows.test_start, time(0), tzinfo=UTC)
+
+
+def _created(doc: dict[str, object]) -> datetime:
+    return datetime.fromisoformat(str(doc["created_at"]))
 
 
 def _sha256(path: Path) -> str:
@@ -51,25 +70,59 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _stage_index(data_dir: Path, profile: RepoProfile, stage: Path) -> None:
+    """Copy the index into `stage` without any document from the test period."""
+    src = index_dir(data_dir, profile)
+    dst = stage / src.relative_to(data_dir)
+    dst.mkdir(parents=True)
+    cutoff = _cutoff(profile)
+    with corpus_path(data_dir, profile).open(encoding="utf-8") as fin:
+        lines = [line for line in fin if _created(json.loads(line)) < cutoff]
+    kept = {int(json.loads(line)["number"]) for line in lines}
+    (dst / "corpus.jsonl").write_bytes("".join(lines).encode("utf-8"))
+    for f in sorted(p for p in src.rglob("*") if p.is_file()):
+        rel = f.relative_to(src)
+        if rel.as_posix() == "corpus.jsonl":
+            continue
+        if rel.name == "index.json":
+            meta = json.loads(f.read_text(encoding="utf-8"))
+            text = json.dumps({**meta, "documents": len(kept)}, indent=2) + "\n"
+            (dst / rel).write_bytes(text.encode("utf-8"))
+        elif rel.suffix == ".npz":
+            with np.load(f) as data:
+                numbers = np.asarray(data["numbers"])
+                vectors = np.asarray(data["vectors"])
+            mask = np.isin(numbers, np.array(sorted(kept), dtype=np.int64))
+            (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+            with (dst / rel).open("wb") as fh:
+                np.savez(fh, numbers=numbers[mask], vectors=vectors[mask])
+        else:  # an unknown file could carry anything: refuse rather than ship it
+            raise PackError(f"unexpected file in the index: {rel.as_posix()}")
+
+
 def build_pack(data_dir: Path, profile: RepoProfile, out: Path) -> PackManifest:
-    """Write `out` (.tar.gz): the tables without test rows, the index, and a manifest."""
+    """Write `out` (.tar.gz): tables and index without the test period, and a manifest."""
     paths = dataset_paths(data_dir, data_dir, profile)
     assignments = read_parquet(paths.splits)
     kept = {r["number"] for r in assignments if not _is_test(r["split"])}
-    files: dict[str, str] = {}
     with tempfile.TemporaryDirectory() as tmp, tarfile.open(out, "w:gz") as tar:
+        stage = Path(tmp)
         for table in (paths.snapshots, paths.silver, paths.splits):
-            rel = table.relative_to(data_dir).as_posix()
-            staged = Path(tmp) / rel
-            write_parquet(staged, [r for r in read_parquet(table) if r["number"] in kept])
-            files[rel] = _sha256(staged)
-            tar.add(staged, arcname=rel)
-        for f in sorted(p for p in index_dir(data_dir, profile).rglob("*") if p.is_file()):
-            rel = f.relative_to(data_dir).as_posix()
+            rows = [r for r in read_parquet(table) if r["number"] in kept]
+            write_parquet(stage / table.relative_to(data_dir), rows)
+        _stage_index(data_dir, profile, stage)
+        files: dict[str, str] = {}
+        for f in sorted(p for p in stage.rglob("*") if p.is_file()):
+            rel = f.relative_to(stage).as_posix()
             files[rel] = _sha256(f)
             tar.add(f, arcname=rel)
-        splits = sorted({r["split"] for r in assignments if r["number"] in kept})
-        manifest = PackManifest(version=PACK_VERSION, repo=profile.repo, splits=splits, files=files)
+        manifest = PackManifest(
+            version=PACK_VERSION,
+            repo=profile.repo,
+            splits=sorted({r["split"] for r in assignments if r["number"] in kept}),
+            history_cutoff=profile.windows.test_start,
+            files=files,
+        )
         data = manifest.model_dump_json(indent=2).encode("utf-8")
         info = tarfile.TarInfo(MANIFEST)
         info.size = len(data)
@@ -77,12 +130,9 @@ def build_pack(data_dir: Path, profile: RepoProfile, out: Path) -> PackManifest:
     return manifest
 
 
-class PackError(Exception):
-    pass
-
-
-def extract_pack(archive: Path, data_dir: Path) -> PackManifest:
-    """Unpack into `data_dir` and verify every file against the manifest."""
+def extract_pack(archive: Path, data_dir: Path, profile: RepoProfile) -> PackManifest:
+    """Unpack into `data_dir`, verify checksums, and re-check the test-period cut against
+    `profile` (not against the manifest's own claims)."""
     with tarfile.open(archive) as tar:
         # filter="data" rejects absolute paths, "..", and links out of the tree.
         tar.extractall(data_dir, filter="data")
@@ -91,8 +141,6 @@ def extract_pack(archive: Path, data_dir: Path) -> PackManifest:
     )
     if manifest.version != PACK_VERSION:
         raise PackError(f"pack version {manifest.version}, expected {PACK_VERSION}")
-    if any(_is_test(s) for s in manifest.splits):
-        raise PackError("this pack contains test-split rows; the gate refuses it")
     bad = [
         rel
         for rel, digest in manifest.files.items()
@@ -100,4 +148,12 @@ def extract_pack(archive: Path, data_dir: Path) -> PackManifest:
     ]
     if bad:
         raise PackError(f"{len(bad)} files are missing or fail their checksum, e.g. {bad[0]}")
+    splits = {r["split"] for r in read_parquet(dataset_paths(data_dir, data_dir, profile).splits)}
+    if any(_is_test(s) for s in splits | set(manifest.splits)):
+        raise PackError("this pack contains test-split rows; the gate refuses it")
+    cutoff = _cutoff(profile)
+    with corpus_path(data_dir, profile).open(encoding="utf-8") as f:
+        late = sum(_created(json.loads(line)) >= cutoff for line in f)
+    if late:
+        raise PackError(f"the corpus has {late} documents from the test period")
     return manifest

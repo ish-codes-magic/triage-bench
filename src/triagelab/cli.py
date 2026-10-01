@@ -979,17 +979,22 @@ def gate_pack(
 @gate_app.command("unpack")
 def gate_unpack(
     archive: Annotated[Path, typer.Argument(help="An eval pack (.tar.gz).")],
+    profile_path: ProfileOpt,
     data_dir: DataDirOpt = Path("data"),
 ) -> None:
-    """Unpack and verify an eval pack; refuses a pack with test-split rows."""
+    """Unpack and verify an eval pack; refuses anything from the test period."""
     from triagelab.data.evalpack import PackError, extract_pack
+    from triagelab.data.profile import load_profile
 
     try:
-        manifest = extract_pack(archive, data_dir)
+        manifest = extract_pack(archive, data_dir, load_profile(profile_path))
     except PackError as err:
         typer.echo(f"eval pack rejected: {err}", err=True)
         raise typer.Exit(code=1) from err
-    typer.echo(f"{len(manifest.files)} files verified, splits {manifest.splits}")
+    typer.echo(
+        f"{len(manifest.files)} files verified, splits {manifest.splits}, "
+        f"history before {manifest.history_cutoff}"
+    )
 
 
 @app.command()
@@ -1014,4 +1019,52 @@ def deltas(
     out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
     out.write_bytes(f"# {spec.title} ({labels} labels)\n\n{table}".encode())
     typer.echo(table)
+    typer.echo(f"written to {out.as_posix()}")
+
+
+def _echo_report(text: str) -> None:
+    """Echo a report on any console: a Windows cp1252 console can't print e.g. "τ"."""
+    import sys
+
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    typer.echo(text.encode(encoding, errors="replace").decode(encoding))
+
+
+@app.command()
+def calibration(
+    spec_path: Annotated[Path, typer.Argument(help="A calibration spec (title, sources).")],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+    figures_dir: Annotated[Path, typer.Option("--figures-dir")] = Path("reports/figures"),
+) -> None:
+    """Calibration of each source's confidences: tables, slices, reliability and
+    risk-coverage figures. Writes <spec>-<labels>.md next to the spec."""
+    from triagelab.eval.calibration_report import CalibrationSpec, build_report
+
+    spec = CalibrationSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(DEFAULT_CONFIG)
+    text = build_report(spec, cfg.paths.runs_dir, _labels(labels), figures_dir, spec_path.stem)
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(text.encode())
+    _echo_report(text)
+    typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def cascade(
+    spec_path: Annotated[Path, typer.Argument(help="A cascade spec (cheap, full, gates).")],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+    figures_dir: Annotated[Path, typer.Option("--figures-dir")] = Path("reports/figures"),
+) -> None:
+    """The cascade curve per gate, the dev-chosen τ, and a paired comparison with the full
+    agent. Offline: recombines stored runs. Writes <spec>-<labels>.md next to the spec."""
+    from triagelab.eval.cascade_report import CascadeSpec, build_cascade_report
+
+    spec = CascadeSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(DEFAULT_CONFIG)
+    text = build_cascade_report(
+        spec, cfg.paths.runs_dir, _labels(labels), figures_dir, spec_path.stem
+    )
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(text.encode())
+    _echo_report(text)
     typer.echo(f"written to {out.as_posix()}")

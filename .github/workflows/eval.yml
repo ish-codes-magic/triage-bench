@@ -72,7 +72,7 @@ jobs:
       - name: Download and verify the eval pack
         run: |
           gh release download "$EVALPACK_TAG" --pattern evalpack.tar.gz --dir "$RUNNER_TEMP"
-          uv run triagelab gate unpack "$RUNNER_TEMP/evalpack.tar.gz" --data-dir data
+          uv run triagelab gate unpack "$RUNNER_TEMP/evalpack.tar.gz" -p configs/repos/python__cpython.yaml --data-dir data
 
       - name: Cache the frozen source checkout and the embedding model
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

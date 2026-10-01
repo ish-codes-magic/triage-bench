@@ -26,7 +26,7 @@ from litellm.exceptions import AuthenticationError, BadRequestError
 
 from triagelab.config import ProviderRoute
 from triagelab.cost import Usage
-from triagelab.llm_client import Completion, LLMRequest, Message, ToolCall
+from triagelab.llm_client import Completion, LLMRequest, Message, TokenLogprob, ToolCall
 
 litellm.suppress_debug_info = True
 litellm.drop_params = False
@@ -109,6 +109,9 @@ def build_params(request: LLMRequest, *, timeout_s: float) -> dict[str, Any]:
             if request.tool_choice in ("auto", "none", "required")
             else {"type": "function", "function": {"name": request.tool_choice}}
         )
+    if request.top_logprobs is not None:
+        params["logprobs"] = True
+        params["top_logprobs"] = request.top_logprobs
     extra_body: dict[str, Any] = {}
     if request.route is not None:
         # LiteLLM merges `extra_body` into the JSON it sends to OpenRouter.
@@ -186,4 +189,18 @@ def _to_completion(response: Any) -> Completion:
             reasoning_tokens=int(getattr(out_details, "reasoning_tokens", 0) or 0),
         ),
         litellm_cost_usd=hidden.get("response_cost"),
+        first_token_logprobs=_first_token_logprobs(response.choices[0]),
+    )
+
+
+def _first_token_logprobs(choice: Any) -> tuple[TokenLogprob, ...]:
+    """The first generated token's top alternatives, or () if none were returned."""
+    logprobs = getattr(choice, "logprobs", None)
+    content = getattr(logprobs, "content", None) if logprobs is not None else None
+    if not content:
+        return ()
+    top = cast(list[Any], getattr(content[0], "top_logprobs", None) or [])
+    return tuple(
+        TokenLogprob(token=str(getattr(t, "token", "")), logprob=float(getattr(t, "logprob", 0.0)))
+        for t in top
     )

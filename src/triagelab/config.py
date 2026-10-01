@@ -110,7 +110,7 @@ class PathsConfig(_Strict):
     ledger_file: PortablePath = Path("runs/spend_ledger.jsonl")
 
 
-SystemKind = Literal["majority", "classifier", "llm_single_shot", "agent"]
+SystemKind = Literal["majority", "classifier", "llm_single_shot", "agent", "decisions"]
 
 
 class AgentBudgetConfig(_Strict):
@@ -162,6 +162,19 @@ class AgentConfig(_Strict):
     mcp: McpConfig = McpConfig()
 
 
+class DecisionsConfig(_Strict):
+    """E6: one decision backend answering single-choice questions (decisions/)."""
+
+    backend: Literal["llm", "classifier"]
+    # llm only: where the confidence comes from (decisions/llm.py).
+    confidence: Literal["verbalized", "logprobs"] = "verbalized"
+    questions: list[Literal["type", "component"]] = Field(
+        default_factory=lambda: ["type", "component"]
+    )
+    top_logprobs: int = Field(default=20, ge=1, le=20)
+    classifier_c: float = Field(default=1.0, gt=0, description="Inverse L2 strength.")
+
+
 class SystemConfig(_Strict):
     """Which triage system an experiment evaluates, and its knobs."""
 
@@ -171,6 +184,7 @@ class SystemConfig(_Strict):
     # or offered in the vocabulary (LLM): rarer ones can't be evaluated meaningfully.
     min_label_count: int = Field(default=10, ge=1)
     agent: AgentConfig | None = None  # required when kind is "agent"
+    decisions: DecisionsConfig | None = None  # required when kind is "decisions"
     # Iteration 8: topic/OS labels below this confidence are dropped, by every LLM-based
     # system (triagelab/labels.py). 0 keeps everything.
     family_label_min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -194,6 +208,10 @@ class SystemConfig(_Strict):
     def _agent_needs_its_block(self) -> Self:
         if (self.kind == "agent") != (self.agent is not None):
             raise ValueError("system.agent is required for kind 'agent' and only allowed there")
+        if (self.kind == "decisions") != (self.decisions is not None):
+            raise ValueError(
+                "system.decisions is required for kind 'decisions' and only allowed there"
+            )
         return self
 
 

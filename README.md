@@ -166,7 +166,7 @@ Each experiment is a config file that differs from the reference agent in **one*
   - cost per issue rises by more than 30%;
   - fallback answers exceed 6%;
   - any baseline issue is missing.
-- **What CI downloads:** a checksummed eval pack with every test-period row removed at packing time.
+- **What CI downloads:** a checksummed eval pack with nothing from the test period: no table rows, and no retrieval history. Both cuts are re-checked on unpacking.
 - **Dry runs:** a [pass](reports/gate/dry-run.md) and a [fail](reports/gate/dry-run-regression.md).
 
 ## Measuring the measurement (M5): label noise, adjudicated labels, a calibrated judge
@@ -282,7 +282,7 @@ The process was the one designed for a human:
   - **A regression gate for an LLM system** (`eval.yml`):
     - the real API on a fixed subset, approval-gated, capped at $1 and at one run a week;
     - paired-bootstrap deltas, failure-category deltas and a coverage rule;
-    - a committed baseline, and an eval pack that cannot contain test rows.
+    - a committed baseline, and an eval pack that cannot contain anything from the test period.
   - Planned: an approval-gated, audited one-time test-set evaluation.
 - **Verify, don't remember.** Before any code, every external API was checked against current docs, and several contradicted older assumptions. → [M0 learning note](docs/learning/M0-foundations.md)
 

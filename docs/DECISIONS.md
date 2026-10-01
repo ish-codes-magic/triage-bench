@@ -830,10 +830,14 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - **Why thresholds apply to point estimates, not CIs:** on 50 issues a real 5-point drop is rarely significant, so a CI-based gate would almost never fire. The CI is printed next to every delta for the reviewer.
 - **Data:** an **eval pack** (`triagelab gate pack`, about 29 MB) holds:
   - the dataset tables with every test-period row removed (the test sample and its reserve);
-  - the retrieval index;
+  - the retrieval index, cut at the start of the test period;
   - a SHA-256 manifest.
 
-  `gate unpack` verifies each file and refuses a pack that claims test rows. The source checkout is re-downloaded at the frozen commit, and the gold labels are in git.
+  The source checkout is re-downloaded at the frozen commit, and the gold labels are in git.
+- **Correction, before the first publish (2026-10-01):**
+  - The first pack cut the tables but shipped the *whole* retrieval corpus. That's every issue up to `eval_end`, test-period issues included, each with its label history, which amounts to the test labels, in a public repository.
+  - The pack (version 2) now also drops every corpus document and embedding created on or after `test_start`. That loses nothing: the gate triages dev issues, and `as_of` never shows a later issue.
+  - `gate unpack` re-checks both cuts against the repository's own profile instead of trusting the manifest, and refuses unknown index files.
 - **Workflow (`eval.yml`):**
   - Triggers: the `run-eval` PR label, or a manual dispatch.
   - The `eval` environment requires owner approval and holds the API key. Fork PRs are excluded, and `pull_request_target` is never used.

@@ -26,7 +26,7 @@ from triagelab import wiring
 from triagelab.baselines.classifier import ClassifierTriager
 from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
 from triagelab.baselines.majority import MajorityTriager
-from triagelab.config import Config
+from triagelab.config import Config, read_subset
 from triagelab.cost import BudgetExceededError
 from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile, load_profile
@@ -125,6 +125,7 @@ def build_triager(
             family_vocabulary(train, cfg.system.min_label_count),
             client(),
             max_body_chars=cfg.system.max_body_chars,
+            family_label_min_confidence=cfg.system.family_label_min_confidence,
             run_id=run_id,
             run_dir=run_dir,
             stack=stack,
@@ -135,7 +136,21 @@ def build_triager(
         profile,
         family_vocabulary(train, cfg.system.min_label_count),
         max_body_chars=cfg.system.max_body_chars,
+        family_label_min_confidence=cfg.system.family_label_min_confidence,
     )
+
+
+def _subset(examples: list[EvalExample], refs: list[str], split: Split) -> list[EvalExample]:
+    """The listed issues, in the split's order. Every ref must be in the split, so a
+    subset can never pull an issue from another split (e.g. test) into a run."""
+    by_ref = {e.snapshot.issue_ref: e for e in examples}
+    outside = [r for r in refs if r not in by_ref]
+    if outside:
+        raise ValueError(
+            f"{len(outside)} subset issues are not in the {split} split: {outside[:3]}"
+        )
+    wanted = set(refs)
+    return [e for e in examples if e.snapshot.issue_ref in wanted]
 
 
 def _dataset_hash(cfg: Config, profile: RepoProfile) -> str:
@@ -182,7 +197,10 @@ def run_eval(
         test_guard.authorize(allow_test)
 
     profile = load_profile(cfg.dataset.profile)
-    examples = load_split(cfg.dataset.data_dir, profile, split)[:limit]
+    examples = load_split(cfg.dataset.data_dir, profile, split)
+    if cfg.eval.subset is not None:
+        examples = _subset(examples, read_subset(cfg.eval.subset), split)
+    examples = examples[:limit]
     if resume_dir is not None:
         run_dir, run_id = resume_dir, resume_dir.name
     else:
@@ -200,6 +218,7 @@ def run_eval(
                 "skills": ",".join(cfg.system.agent.skills) if cfg.system.agent else "-",
                 "dataset_hash": _dataset_hash(cfg, profile),
                 "issues": str(len(examples)),
+                "subset": cfg.eval.subset.as_posix() if cfg.eval.subset else "-",
             },
         )
         run_id = manifest.run_id

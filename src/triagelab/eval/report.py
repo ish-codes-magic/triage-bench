@@ -4,6 +4,7 @@ AGENTS.md §16: every reported number is regenerated from runs/, never typed by 
 """
 
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -14,9 +15,10 @@ from pydantic import BaseModel
 from triagelab.config import Config
 from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split, parse_split
-from triagelab.data.storage import read_jsonl
+from triagelab.data.storage import read_jsonl, read_parquet
 from triagelab.eval.bootstrap import paired_bootstrap
 from triagelab.eval.dataset import EvalExample, load_split
+from triagelab.eval.failure_tagger import FAILURES_FILE
 from triagelab.eval.gold_labels import human_predictions, with_gold
 from triagelab.eval.registry import RunManifest
 from triagelab.eval.score import METRICS, MetricScore, SystemStats, align, score, statistic
@@ -25,13 +27,15 @@ from triagelab.triage import TriageResult
 
 Labels = Literal["silver", "gold"]
 
+# T4 (needs-info) is scored in every scorecard but kept out of the headline table:
+# adjudication showed its silver labels track CPython's `pending` label, not missing
+# information (ADR-0036).
 HEADLINE = (
     "t1_micro_f1",
     "t1_area_micro_f1",
     "t2_link_f1",
     "t3_accuracy",
     "t3_top3_accuracy",
-    "t4_f1",
 )
 
 
@@ -45,6 +49,17 @@ class ScoredRun(BaseModel):
     dataset_hash: str
     metrics: dict[str, MetricScore]
     stats: SystemStats
+    # Every model call came from the cache: answers and costs are the original run's, but
+    # its latencies measure the replay, not the model.
+    replayed: bool = False
+
+
+def _replayed(run_dir: Path) -> bool:
+    cost_file = run_dir / "cost.json"
+    if not cost_file.is_file():
+        return False
+    cost = json.loads(cost_file.read_text(encoding="utf-8"))
+    return cost.get("calls", 0) > 0 and cost.get("cache_hits") == cost.get("calls")
 
 
 def load_scored_runs(runs_dir: Path) -> list[ScoredRun]:
@@ -68,6 +83,7 @@ def load_scored_runs(runs_dir: Path) -> list[ScoredRun]:
                 dataset_hash=manifest.details.get("dataset_hash", "unknown"),
                 metrics={k: MetricScore.model_validate(v) for k, v in metrics["metrics"].items()},
                 stats=SystemStats.model_validate(metrics["system"]),
+                replayed=_replayed(run_dir),
             )
         )
     return runs
@@ -92,14 +108,14 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
     rows = sorted(latest.values(), key=lambda r: r.name)
     header = (
         "| experiment | system | T1 micro-F1 | T1 area F1 | T2 link F1 | T3 acc | T3 top-3 | "
-        "T4 F1 | $/issue | p50 latency |"
+        "$/issue | p50 latency |"
     )
-    lines = [header, "|" + "---|" * 10]
+    lines = [header, "|" + "---|" * 9]
     for r in rows:
         cells = " | ".join(_cell(r.metrics.get(m)) for m in HEADLINE)
+        latency = "replay" if r.replayed else f"{r.stats.latency_ms_p50 / 1000:.1f}s"
         lines.append(
-            f"| {r.name} | {r.system} | {cells} | ${r.stats.cost_usd_per_issue:.5f} | "
-            f"{r.stats.latency_ms_p50 / 1000:.1f}s |"
+            f"| {r.name} | {r.system} | {cells} | ${r.stats.cost_usd_per_issue:.5f} | {latency} |"
         )
     hashes = sorted({r.dataset_hash[:12] for r in rows})
     lines += [
@@ -110,6 +126,11 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
         + ", ".join(f"`{r.run_id}`" for r in rows)
         + ".",
     ]
+    if any(r.replayed for r in rows):
+        lines.append(
+            '\n"replay": the run re-used every model answer from the cache (a post-processing '
+            "change), so its latency measures the replay; the live run's latency applies."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -264,4 +285,86 @@ def render_comparison(rows: list[DeltaRow], a_name: str, b_name: str) -> str:
         ci = "n/a" if r.delta is None else f"{r.delta:+.3f} [{r.low:+.3f}, {r.high:+.3f}]"
         verdict = "significant" if r.significant else ""
         lines.append(f"| {r.metric} | {f(r.a)} | {f(r.b)} | {ci} | {verdict} |")
+    return "\n".join(lines) + "\n"
+
+
+class Comparison(BaseModel):
+    name: str
+    a: str  # a run id, or "reference"
+    b: str
+
+
+class DeltaSpec(BaseModel):
+    """A paired-comparison report, declared as data (e.g. reports/experiments/m6.yaml)."""
+
+    title: str
+    reference: str
+    metrics: list[str]
+    comparisons: list[Comparison]
+
+
+def deltas_table(spec: DeltaSpec, runs_dir: Path, labels: Labels) -> str:
+    """One row per comparison: B minus A per metric, bold where the 95% CI excludes 0."""
+
+    def run(ref: str) -> Path:
+        return runs_dir / (spec.reference if ref == "reference" else ref)
+
+    def cell(r: DeltaRow) -> str:
+        if r.delta is None:
+            return "n/a"
+        text = f"{r.delta:+.3f} [{r.low:+.3f}, {r.high:+.3f}]"
+        return f"**{text}**" if r.significant else text
+
+    lines = [
+        f"| comparison (B - A) | {' | '.join(spec.metrics)} |",
+        "|---|" + "---|" * len(spec.metrics),
+    ]
+    for c in spec.comparisons:
+        rows = {r.metric: r for r in compare_runs(run(c.a), run(c.b), labels=labels)}
+        missing = set(spec.metrics) - set(rows)
+        if missing:
+            raise ValueError(f"unknown metrics: {sorted(missing)}")
+        lines.append(f"| {c.name} | " + " | ".join(cell(rows[m]) for m in spec.metrics) + " |")
+    lines += [
+        "",
+        f"{labels.capitalize()} labels. Paired bootstrap over the issues both runs answered "
+        "(1,000 resamples); **bold** = the 95% interval excludes 0. "
+        f"Reference: `{spec.reference}`.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def failure_table(spec: DeltaSpec, runs_dir: Path, top: int = 6) -> str | None:
+    """Failure-category counts (LLM tagger) for every tagged run in the spec, or None."""
+    named: dict[str, str] = {spec.reference: "reference"}
+    for c in spec.comparisons:
+        for run_id in (c.a, c.b):
+            if run_id != "reference":
+                named.setdefault(run_id, c.name)
+    counts: dict[str, Counter[str]] = {}
+    failing: dict[str, int] = {}
+    for run_id in named:
+        path = runs_dir / run_id / FAILURES_FILE
+        if path.is_file():
+            rows = read_parquet(path)
+            counts[run_id] = Counter(cat for r in rows for cat in r["categories"])
+            failing[run_id] = len(rows)
+    if not counts:
+        return None
+    total: Counter[str] = Counter()
+    for c in counts.values():
+        total += c
+    cats = [cat for cat, _ in total.most_common(top)]
+    lines = [
+        f"| run | failing issues | {' | '.join(cats)} |",
+        "|---|---|" + "---|" * len(cats),
+    ]
+    for run_id, c in counts.items():
+        cells = " | ".join(str(c[cat]) for cat in cats)
+        lines.append(f"| {named[run_id]} (`{run_id[-6:]}`) | {failing[run_id]} | {cells} |")
+    lines += [
+        "",
+        "Failure categories from the LLM tagger against the adjudicated labels "
+        "(docs/FAILURE_TAXONOMY.md; categories with tagger kappa < 0.6 are unvalidated).",
+    ]
     return "\n".join(lines) + "\n"

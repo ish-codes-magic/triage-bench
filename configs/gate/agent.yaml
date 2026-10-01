@@ -1,0 +1,7 @@
+# The gate's experiment: the reference agent on the fixed 50-issue dev subset, with a hard
+# per-run spend cap. eval.yml runs it against the real API; locally it replays from the
+# model cache, because its requests are the reference agent's.
+extends: ../experiments/agent.yaml
+name: gate-agent
+budget: {usd_per_run: 1.00}
+eval: {subset: configs/gate/dev-subset.txt}

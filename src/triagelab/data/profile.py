@@ -95,6 +95,12 @@ class RepoProfile(_Strict):
     def linked_pr_regex(self, number: int) -> re.Pattern[str]:
         return re.compile(self.linked_pr_title_pattern.replace("{number}", str(number)))
 
+    def component_of(self, path: str) -> Component | None:
+        """The component owning a repository path (first matching prefix), if any."""
+        if path.startswith(self.ignore_paths):
+            return None
+        return next((c for c in self.components if path.startswith(c.prefixes)), None)
+
 
 def load_profile(path: Path) -> RepoProfile:
     raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))

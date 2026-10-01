@@ -49,7 +49,7 @@ INVALID = {"guesses": [{"label": "type-bug", "confidence": 2.0}], "note": "ok"}
 
 
 def run(
-    tmp_path: Path, script: list[Any], **budget: int
+    tmp_path: Path, script: list[Any], *, named_tool_choice: bool = True, **budget: int
 ) -> tuple[LoopOutcome[Answer], FakeBackend, list[dict[str, Any]]]:
     backend = FakeBackend(script=script)
     tracer = RunTracer(run_id="r", jsonl_path=tmp_path / "traces.jsonl")
@@ -65,6 +65,7 @@ def run(
         context_limit_tokens=10_000,
         max_validation_retries=2,
         trace=tracer.issue("o/r#1", metadata={}),
+        named_tool_choice=named_tool_choice,
     )
     lines = (tmp_path / "traces.jsonl").read_text(encoding="utf-8").splitlines()
     return outcome, backend, [json.loads(line) for line in lines]
@@ -126,6 +127,27 @@ def test_near_the_step_limit_the_final_call_is_forced(tmp_path: Path) -> None:
         max_steps=3,
     )
     assert [r.tool_choice for r in backend.requests] == [None, None, SUBMIT]
+    assert out.stop_reason == "submitted"
+    assert out.forced == "max_steps"
+
+
+def test_a_route_that_cannot_force_is_offered_only_the_submit_tool(tmp_path: Path) -> None:
+    out, backend, _ = run(
+        tmp_path,
+        [
+            completion(calls=(call("echo", {}, "c1"),)),
+            completion(calls=(call("echo", {}, "c2"),)),
+            completion(calls=(call(SUBMIT, VALID, "c3"),)),
+        ],
+        named_tool_choice=False,
+        max_steps=3,
+    )
+    assert [r.tool_choice for r in backend.requests] == [None, None, None]
+    assert [t.name for t in backend.requests[1].tools] == ["echo", SUBMIT]
+    assert [t.name for t in backend.requests[2].tools] == [SUBMIT]
+    last = backend.requests[2].messages[-1]
+    assert last.role == "user"
+    assert f"max_steps limit is reached. Call {SUBMIT} now" in last.content
     assert out.stop_reason == "submitted"
     assert out.forced == "max_steps"
 

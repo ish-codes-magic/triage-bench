@@ -13,7 +13,15 @@ from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split
 from triagelab.data.storage import append_jsonl, read_jsonl
 from triagelab.eval.dataset import load_split
-from triagelab.eval.report import compare_runs, load_scored_runs, rescore_on_gold, results_table
+from triagelab.eval.report import (
+    Comparison,
+    DeltaSpec,
+    compare_runs,
+    deltas_table,
+    load_scored_runs,
+    rescore_on_gold,
+    results_table,
+)
 from triagelab.eval.runner import RunOutcome, TestSetLockedError, run_eval
 from triagelab.labeling.gold import Decision, GoldRecord, GoldStore, gold_path
 from triagelab.llm_client import LLMClient
@@ -217,3 +225,72 @@ def test_runs_rescore_on_gold_with_a_human_baseline_row(workspace: Path) -> None
         resamples=50,
     )  # fmt: skip
     assert all(r.delta in (0.0, None) for r in gold_rows)
+
+
+def _with_subset(cfg: Config, path: Path) -> Config:
+    return cfg.model_copy(update={"eval": cfg.eval.model_copy(update={"subset": path})})
+
+
+def test_a_subset_run_evaluates_only_its_issues(workspace: Path) -> None:
+    dev = load_split(workspace / "data", load_profile(PROFILE_PATH), "dev")
+    subset = workspace / "subset.txt"
+    subset.write_text(f"# comment\n{dev[0].snapshot.issue_ref}  # trailing\n", encoding="utf-8")
+    outcome = _run(_with_subset(_config(workspace, "majority"), subset))
+    assert outcome.total == 1
+    manifest = json.loads((outcome.run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["details"]["subset"] == subset.as_posix()
+
+
+def test_a_subset_cannot_reach_another_split(workspace: Path) -> None:
+    test_issue = load_split(workspace / "data", load_profile(PROFILE_PATH), "test")[0]
+    subset = workspace / "subset.txt"
+    subset.write_text(test_issue.snapshot.issue_ref + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not in the dev split"):
+        _run(_with_subset(_config(workspace, "majority"), subset))
+
+
+def test_a_fully_replayed_run_shows_no_latency(workspace: Path) -> None:
+    run = _run(_config(workspace, "majority", name="e-a")).run_dir
+    cost = json.loads((run / "cost.json").read_text(encoding="utf-8"))
+    (run / "cost.json").write_text(json.dumps({**cost, "calls": 5, "cache_hits": 5}), "utf-8")
+    table = results_table(load_scored_runs(workspace / "runs"), "dev")
+    assert "| replay |" in table
+    assert "measures the replay" in table
+
+
+def test_a_declared_deltas_table(workspace: Path) -> None:
+    a = _run(_config(workspace, "majority", name="e-a")).run_id
+    b = _run(_config(workspace, "majority", name="e-b")).run_id
+    spec = DeltaSpec(
+        title="t",
+        reference=a,
+        metrics=["t1_micro_f1"],
+        comparisons=[Comparison(name="b vs ref", a="reference", b=b)],
+    )
+    table = deltas_table(spec, workspace / "runs", "silver")
+    assert "| b vs ref | +0.000 [+0.000, +0.000] |" in table
+    with pytest.raises(ValueError, match="unknown metrics"):
+        deltas_table(spec.model_copy(update={"metrics": ["nope"]}), workspace / "runs", "silver")
+
+
+def test_failure_table_lists_tagged_runs_only(workspace: Path) -> None:
+    from triagelab.data.storage import write_parquet
+    from triagelab.eval.report import failure_table
+
+    a = _run(_config(workspace, "majority", name="e-a")).run_id
+    b = _run(_config(workspace, "majority", name="e-b")).run_id
+    spec = DeltaSpec(
+        title="t", reference=a, metrics=["t1_micro_f1"],
+        comparisons=[Comparison(name="E9: b", a="reference", b=b)],
+    )  # fmt: skip
+    assert failure_table(spec, workspace / "runs") is None
+    rows = [
+        {"issue_ref": "o/r#1", "categories": ["x", "y"]},
+        {"issue_ref": "o/r#2", "categories": ["x"]},
+    ]
+    write_parquet(workspace / "runs" / b / "failures.parquet", rows)
+    table = failure_table(spec, workspace / "runs")
+    assert table is not None
+    assert "| run | failing issues | x | y |" in table
+    assert f"| E9: b (`{b[-6:]}`) | 2 | 2 | 1 |" in table
+    assert "reference" not in table.split("\n\n")[0]  # untagged runs are left out

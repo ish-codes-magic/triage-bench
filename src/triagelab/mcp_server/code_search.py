@@ -23,6 +23,7 @@ class CodeHit(BaseModel):
     path: str
     line: int
     snippet: str
+    component: str | None = None  # filled in by the server from the component map
 
 
 def _snippet(text: str) -> str:

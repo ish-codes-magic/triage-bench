@@ -185,3 +185,56 @@ def test_skill_activation_can_force_the_first_call(
     )
     agent.triage(ISSUE_3)
     assert backend.requests[0].tool_choice == expected
+
+
+def test_stuffed_agent_gets_similar_issues_in_the_prompt_and_no_tools(tmp_path: Path) -> None:
+    backend = FakeBackend(script=[completion(calls=(call("submit_triage", ANSWER, "c1"),))])
+    with McpSession.in_process(build_server(make_intel(tmp_path / "co"))) as mcp:
+        agent = AgentTriager(
+            client=make_client(tmp_path, backend),
+            llm=LLMConfig(model=FAKE_MODEL),
+            agent=AgentConfig(tools=[], stuff_similar_k=5),
+            profile=PROFILE,
+            family_labels=[],
+            skills=SkillSet([]),
+            mcp=mcp,
+            tracer=RunTracer(run_id="r", jsonl_path=None),
+            max_body_chars=1000,
+        )
+        agent.triage(ISSUE_3)
+    request = backend.requests[0]
+    user = request.messages[1].content
+    assert "<similar_issues>" in user
+    assert "- #1 [" in user  # the earlier zipfile report
+    assert "- #3 [" not in user  # never itself or anything later
+    assert [t.name for t in request.tools] == ["submit_triage"]  # retrieval was done for it
+
+
+@pytest.mark.parametrize(("floor", "kept"), [(0.0, True), (0.5, True), (0.9, False)])
+def test_low_confidence_topic_labels_can_be_dropped(
+    tmp_path: Path, floor: float, kept: bool
+) -> None:
+    labels = [
+        {"label": "type-bug", "confidence": 0.3},  # type and area labels are never dropped
+        {"label": "stdlib", "confidence": 0.3},
+        {"label": "topic-asyncio", "confidence": 0.8},
+    ]
+    backend = FakeBackend(
+        script=[completion(calls=(call("submit_triage", {**ANSWER, "labels": labels}, "c1"),))]
+    )
+    agent = AgentTriager(
+        client=make_client(tmp_path, backend),
+        llm=LLMConfig(model=FAKE_MODEL),
+        agent=AgentConfig(),
+        profile=PROFILE,
+        family_labels=["topic-asyncio"],
+        skills=SkillSet([]),
+        mcp=None,
+        tracer=RunTracer(run_id="r", jsonl_path=None),
+        max_body_chars=1000,
+        family_label_min_confidence=floor,
+    )
+    result = agent.triage(ISSUE_3)
+    assert result.labels[:2] == ["type-bug", "stdlib"]
+    assert ("topic-asyncio" in result.labels) is kept
+    assert ("topic-asyncio" in result.label_confidence) is kept

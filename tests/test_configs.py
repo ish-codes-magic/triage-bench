@@ -17,9 +17,9 @@ from triagelab.llm_client import LLMRequest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = sorted(
     p
-    for folder in ("experiments", "judge")
+    for folder in ("experiments", "judge", "gate")
     for p in (REPO_ROOT / "configs" / folder).glob("*.yaml")
-    if p.name != "rubric.yaml"
+    if p.name not in ("rubric.yaml", "gate.yaml")  # not experiment configs
 )
 
 
@@ -29,3 +29,13 @@ def test_config_resolves_to_a_priced_route(path: Path) -> None:
     prices = load_price_table(REPO_ROOT / cfg.paths.prices_file)
     request = LLMRequest(model=cfg.llm.model, route=cfg.llm.route, messages=(), max_tokens=1)
     prices.price_for(request.price_key())  # raises UnknownModelPriceError for a bad merge
+
+
+def test_a_floor_recorded_under_agent_is_read_at_system_level() -> None:
+    from triagelab.config import SystemConfig
+
+    legacy = SystemConfig.model_validate(
+        {"kind": "agent", "agent": {"skills": [], "family_label_min_confidence": 0.95}}
+    )
+    assert legacy.family_label_min_confidence == 0.95
+    assert legacy.agent is not None

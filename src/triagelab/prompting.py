@@ -18,20 +18,21 @@ UNTRUSTED_ISSUE = (
 )
 
 
+def component_lines(profile: RepoProfile) -> str:
+    return "\n".join(f"- {c.name}: files under {', '.join(c.prefixes)}" for c in profile.components)
+
+
 def vocabulary(profile: RepoProfile, family_labels: Sequence[str]) -> str:
     # Iteration 1 (docs/ITERATIONS.md): v1 printed "- area: stdlib, ..." and the model wrote
     # "area-stdlib" on 57% of issues. Labels are now listed as exact strings to copy.
     tax = profile.taxonomy
-    components = "\n".join(
-        f"- {c.name}: files under {', '.join(c.prefixes)}" for c in profile.components
-    )
     return (
         "Allowed labels. Copy them exactly as written; area labels have no prefix "
         '(write "stdlib", never "area-stdlib").\n'
         f"Type labels (pick one): {', '.join(tax.type)}\n"
         f"Area labels (any that apply): {', '.join(tax.area)}\n"
         f"Topic and OS labels (any that apply): {', '.join(family_labels)}\n\n"
-        f"Components:\n{components}"
+        f"Components:\n{component_lines(profile)}"
     )
 
 
@@ -39,12 +40,15 @@ def issue_prompt(
     issue: IssueSnapshot, profile: RepoProfile, family_labels: Sequence[str], max_chars: int
 ) -> str:
     """The user message: the allowed vocabulary, then the issue as it was opened."""
-    body = issue_text(issue, max_chars)
+    return f"{vocabulary(profile, family_labels)}\n\n{issue_block(issue, max_chars)}"
+
+
+def issue_block(issue: IssueSnapshot, max_chars: int) -> str:
+    """The issue as it was opened, delimited as untrusted data."""
     return (
-        f"{vocabulary(profile, family_labels)}\n\n"
         "<issue>\n"
         f"Author association: {issue.author_association}\n"
         f"Opened: {issue.created_at:%Y-%m-%d}\n\n"
-        f"{body}\n"
+        f"{issue_text(issue, max_chars)}\n"
         "</issue>"
     )

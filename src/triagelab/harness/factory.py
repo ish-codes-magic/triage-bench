@@ -40,6 +40,7 @@ def build_agent(
     client: LLMClient,
     *,
     max_body_chars: int,
+    family_label_min_confidence: float = 0.0,
     run_id: str,
     run_dir: Path,
     stack: ExitStack,
@@ -51,7 +52,7 @@ def build_agent(
         project=cfg.tracing.project,
     )
     stack.callback(tracer.close)
-    wants_mcp = agent_cfg.tools is None or bool(agent_cfg.tools)
+    wants_mcp = agent_cfg.tools is None or bool(agent_cfg.tools) or agent_cfg.stuff_similar_k > 0
     triager = AgentTriager(
         client=client,
         llm=cfg.llm,
@@ -62,6 +63,7 @@ def build_agent(
         mcp=open_repo_intel(cfg, agent_cfg, stack, run_dir) if wants_mcp else None,
         tracer=tracer,
         max_body_chars=max_body_chars,
+        family_label_min_confidence=family_label_min_confidence,
     )
     triager.warm_up()
     return triager

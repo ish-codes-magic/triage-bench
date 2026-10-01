@@ -721,3 +721,149 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - M5's numbers are available now, honestly labeled.
 - A human spot-check of about 20 issues would put a number on the reliability of the model labels. It's recommended, but optional.
 - A threat to validity is recorded: labels from an LLM may favour LLM-shaped answers, which could flatter the LLM systems relative to TF-IDF.
+
+## ADR-0036: T4 (needs-info) leaves the headline metrics
+
+**Context.**
+- T4's silver label is "a human applied `pending`" (§7.3).
+- Adjudicating the 97 usable dev issues flagged **none** as needing information, where silver flagged 15 (κ = 0.00). `pending` in CPython means "awaiting a maintainer decision" or "closing unless someone objects".
+- With zero adjudicated positives, T4 F1 is undefined on gold, and on silver it measures agreement with a process label.
+
+**Decision.**
+- T4 is still predicted and scored in every scorecard, but it's out of the headline results table and the README.
+- Silver T4 numbers are described as "predicts `pending`".
+- A valid needs-info task needs a different derivation. One option is maintainer comments that ask the reporter for information, before any reply. That's future work, re-checked with the same adjudication.
+
+**Consequences.** No headline claim rests on a label that doesn't mean what its name says. The T4 infrastructure (metrics, the `needs_info` field) stays for the re-derivation and for the transfer repo, whose needs-info label may be valid.
+
+## ADR-0037: The spend ledger is appended under a cross-process file lock
+
+**Context.**
+- M6 ran two evaluations in parallel for the first time.
+- Both processes appended to `runs/spend_ledger.jsonl`. On Windows, append mode is not atomic across processes, so two appends overlapped: one line lost its start, and one entry (about $0.005) was lost from the record.
+- The ledger feeds `BudgetGuard`'s total, so a corrupt line stopped every later run (`SpendLedger.entries()` refuses to guess).
+- A stress test of the old code (4 processes × 200 appends) lost 21–38% of lines.
+
+**Decision.**
+- `ledger.record` writes each entry as one binary write, while holding an exclusive lock on `<ledger>.lock` (`triagelab/filelock.py`: `msvcrt.locking` on Windows, `fcntl.flock` elsewhere).
+- No new dependency: `filelock` or `portalocker` would do the same thing in about 30 lines we can read.
+- The damaged ledger was repaired by hand:
+  - the broken fragment was removed;
+  - the lost entry was replaced with a conservative `ledger-repair` adjustment, rounded up.
+
+**Consequences.**
+- Parallel runs are safe. `tests/test_ledger_concurrency.py` runs 4 writer processes and checks that no entry is lost.
+- The budget total stays an upper bound on real spend.
+- A crashed process can't leave the lock held: OS locks are released when the file handle closes.
+
+## ADR-0038: E4's multi-agent arm is a planner, two narrow workers and a synthesizer
+
+**Context.**
+- §13 E4 asks whether a planner plus subagents is worth it over the single agent.
+- M5's taxonomy blamed most agent failures on two behaviours:
+  - thrashing: repeated or overlapping searches;
+  - ignoring evidence: the right component or duplicate was in a tool result, but the answer didn't use it.
+
+  Narrow roles are the usual multi-agent answer to both.
+- Options considered:
+  - an LLM orchestrator that spawns subagents freely, as a tool call;
+  - a fixed pipeline;
+  - a planner that chooses from fixed specialists.
+
+**Decision.**
+- **Plan:** one structured call (`Plan`) decides whether to send a *duplicate scout* (`search_similar_issues`, `get_issue`) and a *code locator* (`search_code`, `get_codeowners`, with the component map in its prompt), and gives each some search hints.
+- **Workers:** each worker runs the same hand-written loop with its own findings schema (`submit_findings`) and budget (6 steps, 4 tool calls, $0.01).
+- **Synthesize:** the synthesizer runs the reference agent's loop, prompt and skills. It has **no retrieval tools**, and it gets the findings as a delimited note, marked as evidence rather than instructions.
+- **If the plan doesn't parse:** both workers are sent, without hints.
+- Free spawning was rejected: with a 9B model it adds a failure mode (bad delegation) without isolating the question.
+- The two arms differ only in how retrieval is organised. Model, skill, vocabulary and answer schema are shared (`architecture: single | planner`).
+
+**Consequences.**
+- E4 measures one change: the same retrieval split into roles.
+- Cost is counted over every role, so the comparison is fair on cost.
+- The trace marks each role with a `role` event. Step numbers restart per role.
+- The synthesizer can't check a worker's claim. If E4 loses, the traces show whether the loss came from bad findings or from bad synthesis.
+
+## ADR-0039: E5 runs the 27B on Novita bf16, with "soft" forcing of the final answer
+
+**Context.**
+- E5's first run (27B on Alibaba) failed on 64 of 100 dev issues. OpenRouter answered 404: "No endpoints found that support the provided 'tool_choice' value".
+- The harness forces the final `submit_triage` call with a named `tool_choice` when a budget runs out.
+- Probes (one call each, 2026-09-30) showed the 27B refuses both a named `tool_choice` and `required` on Alibaba and on Novita. Only an unset (`auto`) `tool_choice` works. The 9B's DeepInfra route accepts named choices.
+
+**Decision.**
+- **Route:** E5 uses Novita at **bf16**, the same precision as the 9B arm. Alibaba doesn't disclose its precision, so this is a better-controlled size comparison.
+- **New capability flag:** `llm.named_tool_choice` (default true).
+  - When it's false, a forced call offers **only** the forced tool, with `tool_choice` unset. The first time, the loop adds one line: "The <limit> limit is reached. Call submit_triage now".
+  - The flag lives in `LLMConfig`, not in the request, so existing cache keys and cassettes are unchanged.
+- **Also fixed:** `tool_choice: required` was being sent as a function name; it now passes through as-is.
+- **Matching:** E5 is paired with a 9B reference run on the same harness (tools v2).
+
+**Consequences.**
+- The two E5 arms force the final answer differently: hard for 9B, soft for 27B. The count of `no_answer` after a forced call is reported, so the difference is visible.
+- The partial Alibaba run (`20260930-114257-e5-agent-27b-3eca81`) is discarded as an infrastructure failure, not a result.
+- §0's `small_model` route changes to `novita/bf16`.
+
+## ADR-0040: The real-API regression gate: fixed subset, blessed baseline, point-estimate thresholds
+
+**Context.**
+- §12.8 asks for a regression gate on real model calls:
+  - a fixed 50-issue dev subset;
+  - a paired-bootstrap delta table posted on the PR;
+  - failure if a headline metric drops beyond a threshold;
+  - a cost cap and the owner's approval.
+- The dataset is gitignored and takes hours to collect, so a CI runner doesn't have it.
+- Each gate run costs about $0.35 of a $150 project budget.
+
+**Decision.**
+- **Subset:** `configs/gate/dev-subset.txt` holds the 50 adjudicated, usable dev issues with the smallest stable hash (`triagelab gate subset`).
+  - It's order-independent and reproducible.
+  - `eval.subset` refuses any ref outside the requested split.
+- **Baseline:** `triagelab gate bless <run>` copies a run's subset predictions, records and failure tags (not its traces) to `reports/gate/baseline/`, which is committed. The owner re-blesses after a merge that changes the reference agent. Comparing against a committed baseline halves the cost of each gate run and makes "what are we comparing against" reviewable in git.
+- **Rules** (`configs/gate/gate.yaml`, scored on gold labels):
+  - FAIL when T1 micro-F1 falls by more than 0.05 or T3 accuracy by more than 0.08 (4 issues);
+  - FAIL when cost per issue rises by more than 30%;
+  - FAIL when more than 6% of answers are fallbacks;
+  - FAIL when the candidate misses any baseline issue. Without this rule, a crashed run passed with nothing to compare; the rule was added after exactly that happened in a local dry run.
+  - A significant drop that stays inside its threshold is a WARN.
+  - T2 is report-only: the subset has 2 duplicates.
+- **Why thresholds apply to point estimates, not CIs:** on 50 issues a real 5-point drop is rarely significant, so a CI-based gate would almost never fire. The CI is printed next to every delta for the reviewer.
+- **Data:** an **eval pack** (`triagelab gate pack`, about 29 MB) holds:
+  - the dataset tables with every test-period row removed (the test sample and its reserve);
+  - the retrieval index;
+  - a SHA-256 manifest.
+
+  `gate unpack` verifies each file and refuses a pack that claims test rows. The source checkout is re-downloaded at the frozen commit, and the gold labels are in git.
+- **Workflow (`eval.yml`):**
+  - Triggers: the `run-eval` PR label, or a manual dispatch.
+  - The `eval` environment requires owner approval and holds the API key. Fork PRs are excluded, and `pull_request_target` is never used.
+  - At most one gate every 6 days unless forced; the run is capped at $1.
+  - Concurrency never cancels a paid run.
+  - The table goes to the job summary and a sticky PR comment, and the run folder is uploaded for 14 days.
+
+**Consequences.**
+- The gate needs three one-time actions from the owner, all outward-facing:
+  1. publish the eval pack as the `evalpack-v1` release asset;
+  2. create the `eval` environment with themselves as required reviewer;
+  3. add the `OPENROUTER_API_KEY` secret to it.
+- The thresholds are a first guess from the iteration 3–5 pairs. An A/A run (baseline configuration against itself, uncached) would measure run-to-run noise directly, and they should be revisited once one exists.
+
+## ADR-0041: The 9B route runs on the owner's DeepInfra key (BYOK)
+
+**Context.**
+- From about 11:47 UTC on 2026-09-30, OpenRouter's *shared* DeepInfra pool for Qwen3.5-9B answered most calls with 429 `engine_overloaded` (`limit_source: upstream_provider_shared_pool`).
+- The pool got about 1–10 calls a minute through, and the iteration-6 run had 79 of 89 issues failing. The endpoint's uptime figures still looked normal, because they don't count these 429s.
+- The alternatives each had a cost:
+  - moving to an fp8 host changes the model;
+  - Parasail bf16 has no tool calling;
+  - making the 27B the agent changes §0.
+
+**Decision.**
+- The owner added a DeepInfra key to OpenRouter (BYOK). Nothing in the requests changes: same model, same `deepinfra/bf16` route, same prices. The generation record of a probe call shows `is_byok: true`.
+- DeepInfra bills the owner directly, and OpenRouter charges nothing on top within its monthly allowance.
+- The spend ledger still prices every call from `configs/prices.yaml`, so the $150 guard covers these calls too.
+- DeepInfra allows 200 concurrent requests per model, so agent runs go from concurrency 4 (chosen because of shared-pool 429s) to 8. Concurrency changes no request and no cache key.
+
+**Consequences.**
+- M4–M6 stay on one model, precision and host.
+- When the key is rate-limited, OpenRouter falls back to the shared pool (the default), and those calls can still 429. The runner retries them as infrastructure failures, never scores them.

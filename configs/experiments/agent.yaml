@@ -6,12 +6,15 @@ llm:
   reasoning: default   # iteration 2: thinking pays for this 9B model (+0.10 T1 micro-F1)
   max_tokens: 4000     # per call; thinking tokens count toward it
   timeout_s: 180
-eval: {concurrency: 4}  # 8 parallel calls hit OpenRouter 429s on this route
+eval: {concurrency: 8}  # the owner's DeepInfra key (ADR-0041): 200 concurrent requests per model
 # ~10 model calls per issue: with 4 attempts, one burst of DeepInfra's shared-pool overload
 # ("engine_overloaded") sank whole issues. Retry settings never change a cache key.
 retry: {max_attempts: 8, max_delay_s: 60.0}
 system:
   kind: agent
+  # Iteration 8: topic/OS labels under 0.95 confidence were right 3 times in 44 on dev
+  # (42 of 46 at or above); 2-fold cross-fitting picked 0.95 in every fold of three runs.
+  family_label_min_confidence: 0.95
   agent:
     skills: [triage-cpython]
     # Iteration 4 (forcing load_skill first) measured no gain and was reverted here; E2

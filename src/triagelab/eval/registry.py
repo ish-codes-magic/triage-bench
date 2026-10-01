@@ -96,12 +96,16 @@ def create_run(
         platform=platform.platform(),
         details=details or {},
     )
-    (run_dir / "config.yaml").write_text(
-        yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False), encoding="utf-8"
-    )
-    (run_dir / "git_sha").write_text(git.label() + "\n", encoding="utf-8")
-    (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    _write(run_dir / "config.yaml", yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    _write(run_dir / "git_sha", git.label())
+    _write(run_dir / "manifest.json", manifest.model_dump_json(indent=2))
     return run_dir, manifest
+
+
+def _write(path: Path, text: str) -> None:
+    # LF and a final newline on every OS: run records get committed (e.g. a gate baseline),
+    # and text mode on Windows would write CRLF.
+    path.write_bytes((text.rstrip("\n") + "\n").encode("utf-8"))
 
 
 def _claim_run_dir(runs_dir: Path, base_id: str) -> Path:
@@ -122,7 +126,7 @@ def _claim_run_dir(runs_dir: Path, base_id: str) -> Path:
 
 
 def write_cost(run_dir: Path, stats: CallStats) -> None:
-    (run_dir / "cost.json").write_text(stats.model_dump_json(indent=2), encoding="utf-8")
+    _write(run_dir / "cost.json", stats.model_dump_json(indent=2))
 
 
 class RunSummary(BaseModel):

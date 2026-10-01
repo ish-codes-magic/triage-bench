@@ -1,0 +1,17 @@
+# M6 ablations on the final harness (iterations 6 + 8). Every arm differs from the
+# reference agent in one config block; regenerate with: triagelab deltas <this file>
+title: "M6 ablations, dev (n = 100), vs the reference agent"
+reference: 20260930-233640-agent-1f32af
+metrics: [t1_micro_f1, t1_type_micro_f1, t1_area_micro_f1, t2_link_f1, t3_accuracy, t3_top3_accuracy]
+comparisons:
+  - {name: "E2: no skill", a: reference, b: 20260930-234546-e2-skills-none-2230f7}
+  - {name: "E2: generic skill (first call)", a: reference, b: 20260930-234546-e2-skills-generic-c174ab}
+  - {name: "E2: CPython skill (first call)", a: reference, b: 20260930-235712-e2-skills-repo-bf6187}
+  - {name: "E2: auto skill (first call)", a: reference, b: 20260930-235712-e2-skills-auto-70827e}
+  - {name: "E2: CPython skill vs no skill", a: 20260930-234546-e2-skills-none-2230f7, b: 20260930-235712-e2-skills-repo-bf6187}
+  - {name: "E2: auto vs CPython skill", a: 20260930-235712-e2-skills-repo-bf6187, b: 20260930-235712-e2-skills-auto-70827e}
+  - {name: "E3: top-8 similar issues stuffed, no MCP tools", a: reference, b: 20261001-000322-e3-stuffed-c7868d}
+  - {name: "E4: planner + subagents", a: reference, b: 20261001-000322-e4-planner-31a518}
+  - {name: "E5: Qwen3.5-27B", a: reference, b: 20261001-001157-e5-agent-27b-7da3e4}
+  - {name: "Agent vs single-shot LLM (both with the floor)", a: 20261001-003800-e1-llm-single-shot-thinking-floor-05e243, b: reference}
+  - {name: "Agent vs TF-IDF classifier", a: 20260929-100338-e1-classifier-aabfa4, b: reference}

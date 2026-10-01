@@ -148,12 +148,8 @@ def t2_duplicate(issue: RawIssue) -> tuple[int | None, DuplicateSource | None]:
 
 def component_of(path: str, profile: RepoProfile) -> tuple[str, str] | None:
     """(component, role) for a changed file, or None if unmapped or ignored."""
-    if path.startswith(profile.ignore_paths):
-        return None
-    for comp in profile.components:
-        if path.startswith(comp.prefixes):
-            return comp.name, comp.role
-    return None
+    comp = profile.component_of(path)
+    return (comp.name, comp.role) if comp else None
 
 
 def t3_component(

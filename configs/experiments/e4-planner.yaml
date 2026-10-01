@@ -1,0 +1,9 @@
+# E4 (is multi-agent worth it?): a planner call, then a duplicate scout and a code locator
+# (each its own small loop), then a synthesizer with the skill but no retrieval tools.
+# The single-agent arm is the reference agent (agent.yaml); everything else is shared.
+extends: agent.yaml
+name: e4-planner
+system:
+  agent:
+    architecture: planner
+    worker_budget: {max_steps: 6, max_tool_calls: 4, max_tokens: 80000, max_cost_usd: 0.01}

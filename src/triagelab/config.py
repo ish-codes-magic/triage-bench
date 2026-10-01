@@ -10,6 +10,7 @@ an ablation without anyone noticing.
 """
 
 import copy
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, cast
 
@@ -72,6 +73,9 @@ class LLMConfig(_Strict):
     seed: int | None = None
     max_tokens: int = Field(default=1024, gt=0)
     timeout_s: float = Field(default=60.0, gt=0)
+    # Can the route force one tool with a named `tool_choice`? Qwen3.5-27B's OpenRouter
+    # endpoints refuse it (ADR-0039); the agent loop then offers only that tool instead.
+    named_tool_choice: bool = True
 
     @model_validator(mode="after")
     def _route_needs_openrouter(self) -> Self:
@@ -145,6 +149,16 @@ class AgentConfig(_Strict):
     # Iteration 5: answer exact repeat calls from history, flag near-duplicate queries,
     # and show the tool budget used after every result (harness/tools.py: RepeatGuard).
     repeat_guard: bool = False
+    # E3 (tools vs stuffing): when > 0, the top-k similar earlier issues are retrieved by
+    # the harness (same MCP search, as of creation) and pasted into the prompt.
+    stuff_similar_k: int = Field(default=0, ge=0, le=20)
+    # E4: "single" is one agent with every tool. "planner" is a planner call, then a
+    # duplicate scout and a code locator (each its own loop with `worker_budget`), then a
+    # synthesizer with the skills but no retrieval tools (harness/planner.py).
+    architecture: Literal["single", "planner"] = "single"
+    worker_budget: AgentBudgetConfig = AgentBudgetConfig(
+        max_steps=6, max_tool_calls=4, max_tokens=80_000, max_cost_usd=0.01
+    )
     mcp: McpConfig = McpConfig()
 
 
@@ -157,6 +171,24 @@ class SystemConfig(_Strict):
     # or offered in the vocabulary (LLM): rarer ones can't be evaluated meaningfully.
     min_label_count: int = Field(default=10, ge=1)
     agent: AgentConfig | None = None  # required when kind is "agent"
+    # Iteration 8: topic/OS labels below this confidence are dropped, by every LLM-based
+    # system (triagelab/labels.py). 0 keeps everything.
+    family_label_min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _floor_moved_out_of_agent(cls, data: Any) -> Any:
+        # Runs recorded on 2026-09-30 carry the floor under `agent:`; their config.yaml
+        # files are records, so they are read as they are and migrated here.
+        if not isinstance(data, dict):
+            return data
+        raw = cast(dict[str, Any], data)
+        agent = raw.get("agent")
+        if not isinstance(agent, dict) or "family_label_min_confidence" not in agent:
+            return raw
+        moved = dict(cast(dict[str, Any], agent))
+        floor = moved.pop("family_label_min_confidence")
+        return {"family_label_min_confidence": floor, **raw, "agent": moved}
 
     @model_validator(mode="after")
     def _agent_needs_its_block(self) -> Self:
@@ -182,6 +214,15 @@ class EvalConfig(_Strict):
     concurrency: int = Field(default=8, ge=1)
     bootstrap_resamples: int = Field(default=1000, ge=100)
     seed: int = 0
+    # A file of issue refs (one per line, # comments): evaluate only these. The CI
+    # regression gate runs a fixed dev subset (configs/gate/dev-subset.txt).
+    subset: PortablePath | None = None
+
+
+def read_subset(path: Path) -> list[str]:
+    # A comment starts a line or follows whitespace: refs themselves contain '#'.
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [ref for line in lines if (ref := re.sub(r"(^|\s)#.*$", "", line).strip())]
 
 
 class Config(_Strict):

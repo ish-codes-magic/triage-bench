@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from triagelab.config import LLMConfig
 from triagelab.data.models import IssueSnapshot
 from triagelab.data.profile import RepoProfile
+from triagelab.labels import confident
 from triagelab.llm_client import LLMClient, LLMRequest, LLMResponse, Message
 from triagelab.prompting import issue_prompt
 from triagelab.triage import TriageResult
@@ -77,12 +78,14 @@ class LLMSingleShotTriager:
         family_labels: Sequence[str],
         *,
         max_body_chars: int = 12_000,
+        family_label_min_confidence: float = 0.0,
     ) -> None:
         self._client = client
         self._llm = llm
         self._profile = profile
         self._family_labels = list(family_labels)
         self._max_body_chars = max_body_chars
+        self._floor = family_label_min_confidence
         self._components = {c.name for c in profile.components}
         tax = profile.taxonomy
         self._allowed_labels = {*tax.type, *tax.area, *self._family_labels}
@@ -135,7 +138,8 @@ class LLMSingleShotTriager:
         if answer is None:
             return base
         component = answer.component if answer.component in self._components else None
-        kept = [g for g in answer.labels if g.label in self._allowed_labels]
+        allowed = [g for g in answer.labels if g.label in self._allowed_labels]
+        kept = confident(allowed, set(self._family_labels), self._floor)
         return base.model_copy(
             update={
                 "labels": [g.label for g in kept],

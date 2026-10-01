@@ -1,0 +1,128 @@
+name: Eval gate (real API)
+
+# The regression gate for an LLM system (AGENTS.md §12.8, ADR-0040): the reference agent
+# runs for real on a fixed 50-issue dev subset, is compared with the blessed baseline
+# (reports/gate/baseline) by paired bootstrap, and the delta table is posted on the PR.
+# It fails when a gated metric drops beyond its threshold (configs/gate/gate.yaml).
+#
+# It costs money (about $0.35 a run), so it never runs on its own:
+#   - on a PR, only when the owner adds the `run-eval` label;
+#   - by hand (workflow_dispatch);
+# and the job waits for the owner's approval in the `eval` environment, which holds the
+# OPENROUTER_API_KEY secret. Forks never get it, and pull_request_target is not used.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run even if a gate already ran in the last 6 days"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One gate per PR at a time; a paid run is never cancelled halfway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Real-API regression gate
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'run-eval' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: eval
+    permissions:
+      contents: read # checkout, and the eval pack (a release asset)
+      actions: read # the weekly limit reads this workflow's past runs
+      pull-requests: write # the delta comment
+    env:
+      EVALPACK_TAG: evalpack-v1
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # budget_usd_total is $150 for the whole project; a nightly or per-push real-API
+      # run would drain it, so the gate runs at most once every 6 days unless forced.
+      - name: At most one real-API gate per week
+        if: ${{ !inputs.force }}
+        run: |
+          since=$(date -u -d '6 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          ran=$(gh run list --workflow eval.yml --created ">=$since" --limit 50 \
+            --json databaseId,conclusion \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }})
+                        | select(.conclusion == \"success\" or .conclusion == \"failure\")]
+                  | length")
+          if [ "$ran" -gt 0 ]; then
+            echo "::error::A real-API gate already ran in the last 6 days; dispatch with force to override."
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-env
+
+      - name: Download and verify the eval pack
+        run: |
+          gh release download "$EVALPACK_TAG" --pattern evalpack.tar.gz --dir "$RUNNER_TEMP"
+          uv run triagelab gate unpack "$RUNNER_TEMP/evalpack.tar.gz" --data-dir data
+
+      - name: Cache the frozen source checkout and the embedding model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            data/checkouts
+            .cache/fastembed
+          key: gate-inputs-${{ hashFiles('configs/repos/python__cpython.yaml') }}
+
+      - name: Frozen source checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run triagelab data checkout -p configs/repos/python__cpython.yaml
+
+      - name: Run the reference agent on the gate subset (hard cap $1)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: uv run triagelab eval -c configs/gate/agent.yaml --split dev
+
+      - name: Tag the candidate's failures (LLM tagger)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: uv run triagelab failures tag runs/*-gate-agent-*/ --labels gold
+
+      - name: Gate check
+        id: gate
+        run: |
+          set +e
+          uv run triagelab gate check runs/*-gate-agent-*/ --out gate.md
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat gate.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post the delta table on the PR
+        if: github.event_name == 'pull_request'
+        run: >-
+          gh pr comment "${{ github.event.pull_request.number }}"
+          --body-file gate.md --edit-last --create-if-none
+
+      - name: Upload the candidate run
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate-run
+          path: |
+            runs/*-gate-agent-*/
+            gate.md
+          retention-days: 14
+
+      - name: Fail on regression
+        if: steps.gate.outputs.status != '0'
+        run: |
+          echo "::error::The regression gate failed; see the job summary."
+          exit 1

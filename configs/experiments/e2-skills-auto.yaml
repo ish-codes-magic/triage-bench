@@ -1,0 +1,7 @@
+# E2 (skills, H1): the auto-generated CPython skill (no human edits), loaded on the first call.
+extends: agent.yaml
+name: e2-skills-auto
+system:
+  agent:
+    skills: [triage-cpython-auto]
+    skill_activation: first_call

@@ -1,0 +1,8 @@
+# E3 (tools vs stuffing, H2): the top-8 similar earlier issues pasted into the prompt, and
+# no MCP tools. The "tools" arm is the reference agent (agent.yaml).
+extends: agent.yaml
+name: e3-stuffed
+system:
+  agent:
+    tools: []
+    stuff_similar_k: 8

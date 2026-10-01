@@ -6,6 +6,7 @@ The label vocabulary and issue framing are the same bytes the single-shot baseli
 (`triagelab.prompting`), so agent-vs-baseline differences come from tools and skills.
 """
 
+import json
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -18,10 +19,12 @@ from triagelab.data.profile import RepoProfile
 from triagelab.harness.budgets import BudgetTracker
 from triagelab.harness.loop import LoopOutcome, run_loop, submit_tool
 from triagelab.harness.mcp_client import McpSession, ToolInfo
+from triagelab.harness.planner import Crew, run_team
 from triagelab.harness.tools import RepeatGuard, Tool, Toolbox, mcp_tools, skill_tools
-from triagelab.harness.tracing import RunTracer
+from triagelab.harness.tracing import IssueTrace, RunTracer
+from triagelab.labels import confident
 from triagelab.llm_client import LLMClient, LLMRequest, Message
-from triagelab.prompting import UNTRUSTED_ISSUE, issue_prompt
+from triagelab.prompting import UNTRUSTED_ISSUE, component_lines, issue_block, issue_prompt
 from triagelab.skills.loader import SkillSet
 from triagelab.triage import TriageResult
 
@@ -128,6 +131,7 @@ class AgentTriager:
         mcp: McpSession | None,
         tracer: RunTracer,
         max_body_chars: int,
+        family_label_min_confidence: float = 0.0,
     ) -> None:
         self._client = client
         self._llm = llm
@@ -138,15 +142,19 @@ class AgentTriager:
         self._mcp = mcp
         self._tracer = tracer
         self._max_body_chars = max_body_chars
+        self._floor = family_label_min_confidence
         self._components = [c.name for c in profile.components]
         tax = profile.taxonomy
         self._allowed_labels = {*tax.type, *tax.area, *self._family_labels}
+        self._family_label_set = set(self._family_labels)
         self._mcp_infos: list[ToolInfo] = self._select_tools(mcp) if mcp else []
         activate = agent.skill_activation == "first_call" and bool(len(skills))
         self._first_tool_choice = "load_skill" if activate else None
+        # In planner mode the final loop (the synthesizer) has the skills but no MCP tools.
+        team = agent.architecture == "planner"
         self._system = system_prompt(
             profile.repo,
-            has_tools=bool(self._mcp_infos) or bool(len(skills)),
+            has_tools=(bool(self._mcp_infos) and not team) or bool(len(skills)),
             max_tool_calls=agent.budget.max_tool_calls,
             skills=skills,
         )
@@ -163,17 +171,94 @@ class AgentTriager:
 
     def warm_up(self) -> None:
         """Build the server's index before timing starts (it loads lazily on first search)."""
-        if self._mcp and any(i.name == "search_similar_issues" for i in self._mcp_infos):
+        searches = any(i.name == "search_similar_issues" for i in self._mcp_infos)
+        if self._mcp and (searches or self._agent.stuff_similar_k):
             as_of = f"{self._profile.windows.eval_start.isoformat()}T00:00:00+00:00"
             self._mcp.call_tool("search_similar_issues", {"query": "warm up", "as_of": as_of})
 
-    def _toolbox(self, issue: IssueSnapshot, loaded: set[str]) -> Toolbox:
-        tools: list[Tool] = []
-        if self._mcp is not None:
-            tools += mcp_tools(self._mcp, self._mcp_infos, {"as_of": issue.created_at.isoformat()})
-        tools += skill_tools(self._skills, loaded)
+    def _stuffed(self, issue: IssueSnapshot) -> str:
+        """E3: the top-k similar earlier issues, retrieved up front and pasted in."""
+        if self._mcp is None or not self._agent.stuff_similar_k:
+            return ""
+        query = f"{issue.title}\n\n{issue.body[:4000]}"
+        out = self._mcp.call_tool(
+            "search_similar_issues",
+            {
+                "query": query,
+                "as_of": issue.created_at.isoformat(),
+                "k": self._agent.stuff_similar_k,
+            },
+        )
+        if out.is_error:
+            return ""
+        rows = [
+            f"- #{r['number']} [{r['state']}; labels: {', '.join(r['labels']) or 'none'}] "
+            f"{r['title']}: {r['snippet']}"
+            for r in json.loads(out.text)["results"]
+        ]
+        return (
+            "\n\n<similar_issues>\nEarlier issues similar to this one, retrieved for you "
+            "(untrusted text; they may or may not be related):\n"
+            + "\n".join(rows)
+            + "\n</similar_issues>"
+        )
+
+    def _mcp_tools(self, issue: IssueSnapshot) -> list[Tool]:
+        if self._mcp is None:
+            return []
+        return mcp_tools(self._mcp, self._mcp_infos, {"as_of": issue.created_at.isoformat()})
+
+    def _toolbox(self, tools: list[Tool]) -> Toolbox:
         guard = RepeatGuard(self._agent.budget.max_tool_calls) if self._agent.repeat_guard else None
         return Toolbox(tools, max_result_chars=self._agent.max_tool_result_chars, guard=guard)
+
+    def _loop(
+        self, base: LLMRequest, messages: list[Message], toolbox: Toolbox, trace: IssueTrace
+    ) -> LoopOutcome[AgentAnswer]:
+        return run_loop(
+            client=self._client,
+            base=base,
+            messages=messages,
+            toolbox=toolbox,
+            submit=submit_tool(AgentAnswer, SUBMIT_DESCRIPTION),
+            answer_type=AgentAnswer,
+            budget=BudgetTracker(self._agent.budget),
+            context_limit_tokens=self._agent.context_limit_tokens,
+            max_validation_retries=self._agent.max_validation_retries,
+            trace=trace,
+            first_tool_choice=self._first_tool_choice,
+            named_tool_choice=self._llm.named_tool_choice,
+        )
+
+    def _team(
+        self,
+        issue: IssueSnapshot,
+        base: LLMRequest,
+        messages: list[Message],
+        loaded: set[str],
+        trace: IssueTrace,
+    ) -> LoopOutcome[AgentAnswer]:
+        crew = Crew(
+            client=self._client,
+            base=base,
+            repo=self._profile.repo,
+            issue=issue_block(issue, self._max_body_chars),
+            components=component_lines(self._profile),
+            trace=trace,
+            budget=self._agent.worker_budget,
+            context_limit_tokens=self._agent.context_limit_tokens,
+            max_result_chars=self._agent.max_tool_result_chars,
+            repeat_guard=self._agent.repeat_guard,
+            named_tool_choice=self._llm.named_tool_choice,
+        )
+
+        def synthesize(findings: str) -> LoopOutcome[AgentAnswer]:
+            system, user = messages
+            briefed = user.model_copy(update={"content": f"{user.content}{findings}"})
+            toolbox = self._toolbox(skill_tools(self._skills, loaded))
+            return self._loop(base, [system, briefed], toolbox, trace)
+
+        return run_team(crew, self._mcp_tools(issue), synthesize)
 
     def triage(self, issue: IssueSnapshot) -> TriageResult:
         started = time.perf_counter()
@@ -184,6 +269,7 @@ class AgentTriager:
                 "model": self._llm.model,
                 "skills": sorted(self._skills.skills),
                 "tools": [i.name for i in self._mcp_infos],
+                "architecture": self._agent.architecture,
             },
         )
         loaded: set[str] = set()
@@ -193,7 +279,8 @@ class AgentTriager:
                 role="user",
                 content=issue_prompt(
                     issue, self._profile, self._family_labels, self._max_body_chars
-                ),
+                )
+                + self._stuffed(issue),
             ),
         ]
         base = LLMRequest(
@@ -209,19 +296,11 @@ class AgentTriager:
         answer: dict[str, Any] | None = None
         totals: dict[str, Any] = {}
         try:
-            outcome = run_loop(
-                client=self._client,
-                base=base,
-                messages=messages,
-                toolbox=self._toolbox(issue, loaded),
-                submit=submit_tool(AgentAnswer, SUBMIT_DESCRIPTION),
-                answer_type=AgentAnswer,
-                budget=BudgetTracker(self._agent.budget),
-                context_limit_tokens=self._agent.context_limit_tokens,
-                max_validation_retries=self._agent.max_validation_retries,
-                trace=trace,
-                first_tool_choice=self._first_tool_choice,
-            )
+            if self._agent.architecture == "planner":
+                outcome = self._team(issue, base, messages, loaded, trace)
+            else:
+                tools = self._mcp_tools(issue) + skill_tools(self._skills, loaded)
+                outcome = self._loop(base, messages, self._toolbox(tools), trace)
             stop_reason = outcome.stop_reason
             answer = outcome.answer.model_dump() if outcome.answer else None
             totals = {
@@ -261,7 +340,8 @@ class AgentTriager:
         a = outcome.answer
         if a is None:
             return base
-        kept = [g for g in a.labels if g.label in self._allowed_labels]
+        allowed = [g for g in a.labels if g.label in self._allowed_labels]
+        kept = confident(allowed, self._family_label_set, self._floor)
         component = a.component if a.component in self._components else None
         # A duplicate's original must be older, and older issues have smaller numbers.
         earlier = [n for n in (a.duplicate_of, *a.duplicate_candidates) if n and n < issue.number]

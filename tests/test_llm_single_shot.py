@@ -118,3 +118,16 @@ def test_prompt_bytes_are_pinned() -> None:
     messages = build_messages(snapshot, PROFILE, ["topic-asyncio", "OS-windows"], 12_000)
     digest = stable_hash([m.model_dump() for m in messages])
     assert digest == "8d54edb58d207f2aa5a2ffdf2d725b372fc4cd11a0b35a5421a28ce9857e815f"
+
+
+def test_the_confidence_floor_applies_to_topic_labels_only(tmp_path: Path) -> None:
+    base = triager(tmp_path, FakeBackend(text=GOOD))
+    floored = LLMSingleShotTriager(
+        base._client,  # pyright: ignore[reportPrivateUsage]
+        LLMConfig(model=MODEL, max_tokens=500),
+        PROFILE,
+        ["topic-asyncio"],
+        family_label_min_confidence=0.85,
+    )
+    result = floored.triage(ISSUE)
+    assert result.labels == ["type-bug"]  # topic-asyncio (0.8) dropped, type kept

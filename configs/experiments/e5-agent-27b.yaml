@@ -1,0 +1,9 @@
+# E5 (model size): the reference agent with Qwen3.5-27B instead of 9B; nothing else changes.
+extends: agent.yaml
+name: e5-agent-27b
+llm:
+  model: openrouter/qwen/qwen3.5-27b
+  # Novita at bf16, the 9B arm's precision. Alibaba (the first choice) rejects a named
+  # tool_choice, which the harness uses to force the final answer (ADR-0039).
+  route: {provider: novita, quantization: bf16}
+  named_tool_choice: false  # every 27B endpoint refuses a forced tool (ADR-0039)

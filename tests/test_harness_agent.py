@@ -225,13 +225,14 @@ def test_low_confidence_topic_labels_can_be_dropped(
     agent = AgentTriager(
         client=make_client(tmp_path, backend),
         llm=LLMConfig(model=FAKE_MODEL),
-        agent=AgentConfig(family_label_min_confidence=floor),
+        agent=AgentConfig(),
         profile=PROFILE,
         family_labels=["topic-asyncio"],
         skills=SkillSet([]),
         mcp=None,
         tracer=RunTracer(run_id="r", jsonl_path=None),
         max_body_chars=1000,
+        family_label_min_confidence=floor,
     )
     result = agent.triage(ISSUE_3)
     assert result.labels[:2] == ["type-bug", "stdlib"]

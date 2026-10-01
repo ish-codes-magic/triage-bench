@@ -125,6 +125,7 @@ def build_triager(
             family_vocabulary(train, cfg.system.min_label_count),
             client(),
             max_body_chars=cfg.system.max_body_chars,
+            family_label_min_confidence=cfg.system.family_label_min_confidence,
             run_id=run_id,
             run_dir=run_dir,
             stack=stack,
@@ -135,6 +136,7 @@ def build_triager(
         profile,
         family_vocabulary(train, cfg.system.min_label_count),
         max_body_chars=cfg.system.max_body_chars,
+        family_label_min_confidence=cfg.system.family_label_min_confidence,
     )
 
 

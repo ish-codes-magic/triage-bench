@@ -22,6 +22,7 @@ from triagelab.harness.mcp_client import McpSession, ToolInfo
 from triagelab.harness.planner import Crew, run_team
 from triagelab.harness.tools import RepeatGuard, Tool, Toolbox, mcp_tools, skill_tools
 from triagelab.harness.tracing import IssueTrace, RunTracer
+from triagelab.labels import confident
 from triagelab.llm_client import LLMClient, LLMRequest, Message
 from triagelab.prompting import UNTRUSTED_ISSUE, component_lines, issue_block, issue_prompt
 from triagelab.skills.loader import SkillSet
@@ -130,6 +131,7 @@ class AgentTriager:
         mcp: McpSession | None,
         tracer: RunTracer,
         max_body_chars: int,
+        family_label_min_confidence: float = 0.0,
     ) -> None:
         self._client = client
         self._llm = llm
@@ -140,6 +142,7 @@ class AgentTriager:
         self._mcp = mcp
         self._tracer = tracer
         self._max_body_chars = max_body_chars
+        self._floor = family_label_min_confidence
         self._components = [c.name for c in profile.components]
         tax = profile.taxonomy
         self._allowed_labels = {*tax.type, *tax.area, *self._family_labels}
@@ -337,13 +340,8 @@ class AgentTriager:
         a = outcome.answer
         if a is None:
             return base
-        floor = self._agent.family_label_min_confidence
-        kept = [
-            g
-            for g in a.labels
-            if g.label in self._allowed_labels
-            and not (g.label in self._family_label_set and g.confidence < floor)
-        ]
+        allowed = [g for g in a.labels if g.label in self._allowed_labels]
+        kept = confident(allowed, self._family_label_set, self._floor)
         component = a.component if a.component in self._components else None
         # A duplicate's original must be older, and older issues have smaller numbers.
         earlier = [n for n in (a.duplicate_of, *a.duplicate_candidates) if n and n < issue.number]

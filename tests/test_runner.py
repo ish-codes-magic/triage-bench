@@ -13,7 +13,15 @@ from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split
 from triagelab.data.storage import append_jsonl, read_jsonl
 from triagelab.eval.dataset import load_split
-from triagelab.eval.report import compare_runs, load_scored_runs, rescore_on_gold, results_table
+from triagelab.eval.report import (
+    Comparison,
+    DeltaSpec,
+    compare_runs,
+    deltas_table,
+    load_scored_runs,
+    rescore_on_gold,
+    results_table,
+)
 from triagelab.eval.runner import RunOutcome, TestSetLockedError, run_eval
 from triagelab.labeling.gold import Decision, GoldRecord, GoldStore, gold_path
 from triagelab.llm_client import LLMClient
@@ -248,3 +256,18 @@ def test_a_fully_replayed_run_shows_no_latency(workspace: Path) -> None:
     table = results_table(load_scored_runs(workspace / "runs"), "dev")
     assert "| replay |" in table
     assert "measures the replay" in table
+
+
+def test_a_declared_deltas_table(workspace: Path) -> None:
+    a = _run(_config(workspace, "majority", name="e-a")).run_id
+    b = _run(_config(workspace, "majority", name="e-b")).run_id
+    spec = DeltaSpec(
+        title="t",
+        reference=a,
+        metrics=["t1_micro_f1"],
+        comparisons=[Comparison(name="b vs ref", a="reference", b=b)],
+    )
+    table = deltas_table(spec, workspace / "runs", "silver")
+    assert "| b vs ref | +0.000 [+0.000, +0.000] |" in table
+    with pytest.raises(ValueError, match="unknown metrics"):
+        deltas_table(spec.model_copy(update={"metrics": ["nope"]}), workspace / "runs", "silver")

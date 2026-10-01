@@ -990,3 +990,25 @@ def gate_unpack(
         typer.echo(f"eval pack rejected: {err}", err=True)
         raise typer.Exit(code=1) from err
     typer.echo(f"{len(manifest.files)} files verified, splits {manifest.splits}")
+
+
+@app.command()
+def deltas(
+    spec_path: Annotated[
+        Path, typer.Argument(help="A comparison spec, e.g. reports/experiments/m6.yaml.")
+    ],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Paired-bootstrap deltas for a declared set of comparisons; writes <spec>-<labels>.md."""
+    from triagelab.eval.report import DeltaSpec, deltas_table
+
+    if labels not in ("silver", "gold"):
+        raise typer.BadParameter("labels must be silver or gold")
+    spec = DeltaSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(config)
+    table = deltas_table(spec, cfg.paths.runs_dir, _labels(labels))
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(f"# {spec.title} ({labels} labels)\n\n{table}".encode())
+    typer.echo(table)
+    typer.echo(f"written to {out.as_posix()}")

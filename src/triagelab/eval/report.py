@@ -284,3 +284,49 @@ def render_comparison(rows: list[DeltaRow], a_name: str, b_name: str) -> str:
         verdict = "significant" if r.significant else ""
         lines.append(f"| {r.metric} | {f(r.a)} | {f(r.b)} | {ci} | {verdict} |")
     return "\n".join(lines) + "\n"
+
+
+class Comparison(BaseModel):
+    name: str
+    a: str  # a run id, or "reference"
+    b: str
+
+
+class DeltaSpec(BaseModel):
+    """A paired-comparison report, declared as data (e.g. reports/experiments/m6.yaml)."""
+
+    title: str
+    reference: str
+    metrics: list[str]
+    comparisons: list[Comparison]
+
+
+def deltas_table(spec: DeltaSpec, runs_dir: Path, labels: Labels) -> str:
+    """One row per comparison: B minus A per metric, bold where the 95% CI excludes 0."""
+
+    def run(ref: str) -> Path:
+        return runs_dir / (spec.reference if ref == "reference" else ref)
+
+    def cell(r: DeltaRow) -> str:
+        if r.delta is None:
+            return "n/a"
+        text = f"{r.delta:+.3f} [{r.low:+.3f}, {r.high:+.3f}]"
+        return f"**{text}**" if r.significant else text
+
+    lines = [
+        f"| comparison (B - A) | {' | '.join(spec.metrics)} |",
+        "|---|" + "---|" * len(spec.metrics),
+    ]
+    for c in spec.comparisons:
+        rows = {r.metric: r for r in compare_runs(run(c.a), run(c.b), labels=labels)}
+        missing = set(spec.metrics) - set(rows)
+        if missing:
+            raise ValueError(f"unknown metrics: {sorted(missing)}")
+        lines.append(f"| {c.name} | " + " | ".join(cell(rows[m]) for m in spec.metrics) + " |")
+    lines += [
+        "",
+        f"{labels.capitalize()} labels. Paired bootstrap over the issues both runs answered "
+        "(1,000 resamples); **bold** = the 95% interval excludes 0. "
+        f"Reference: `{spec.reference}`.",
+    ]
+    return "\n".join(lines) + "\n"

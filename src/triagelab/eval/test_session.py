@@ -17,6 +17,7 @@ Freezing the code (not only the configs) matters: prompts and post-processing li
 
 import hashlib
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,7 +25,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 from triagelab.config import Config, load_config
+from triagelab.data.storage import append_jsonl, read_jsonl
 from triagelab.hashing import stable_hash
+from triagelab.triage import TriageResult
 
 SESSION_LIMIT = 2
 SESSIONS_DIR = Path("reports/test-eval")
@@ -212,3 +215,42 @@ def authorize(
             f"(run {done[0]['run_id']})."
         )
     return session
+
+
+# What is kept in git for each evaluated config: enough to re-score it and to audit it.
+RECORD_FILES = ("config.yaml", "manifest.json", "metrics.json", "cost.json", "git_sha")
+
+
+def import_runs(session_path: Path, artifact_runs: Path, runs_dir: Path) -> dict[str, str]:
+    """Bring a CI test evaluation home: config name -> run id.
+
+    Each session config's test run is copied from the downloaded artifact into the local
+    run registry (for scoring and reports), and its predictions and records are written
+    next to the session file (`session-N/<config>/`), to be committed.
+    """
+    session = load_session(session_path)
+    found: dict[str, Path] = {}
+    for run_dir in sorted(p for p in artifact_runs.iterdir() if (p / "manifest.json").is_file()):
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("details", {}).get("split") == "test":
+            found[str(manifest["name"])] = run_dir
+    missing = [c.name for c in session.configs if c.name not in found]
+    if missing:
+        raise TestSetLockedError(f"the artifact has no test run for: {missing}")
+    imported: dict[str, str] = {}
+    for item in session.configs:
+        source = found[item.name]
+        target = runs_dir / source.name
+        if not target.exists():
+            shutil.copytree(source, target)
+        records = session_path.with_suffix("") / item.name
+        records.mkdir(parents=True, exist_ok=True)
+        latest = {p.issue_ref: p for p in read_jsonl(source / "predictions.jsonl", TriageResult)}
+        (records / "predictions.jsonl").unlink(missing_ok=True)
+        append_jsonl(records / "predictions.jsonl", latest.values())
+        for name in RECORD_FILES:
+            if (source / name).is_file():
+                text = (source / name).read_bytes().decode("utf-8").replace("\r\n", "\n")
+                (records / name).write_bytes((text.rstrip("\n") + "\n").encode("utf-8"))
+        imported[item.name] = source.name
+    return imported

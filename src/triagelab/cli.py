@@ -319,15 +319,29 @@ def results(
     with_blind_pass: Annotated[
         bool, typer.Option(help="Add the annotators' blind pass (only if independent of the gold).")
     ] = False,
+    name: Annotated[
+        str | None, typer.Option(help="Prefix for the output file, e.g. 'uv' -> uv-test.md.")
+    ] = None,
 ) -> None:
-    """Write the results table (latest run per experiment) to reports/results/<split>.md."""
+    """Write the results table (latest run per experiment, on the config's repository) to
+    reports/results/[<name>-]<split>.md."""
+    import json
+
+    from triagelab.data.build import dataset_paths
+    from triagelab.data.profile import load_profile
     from triagelab.data.splits import parse_split
     from triagelab.eval.report import load_scored_runs, rescore_on_gold, results_table
 
     if labels not in ("silver", "gold"):
         raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
+    profile = load_profile(cfg.dataset.profile)
     runs = load_scored_runs(cfg.paths.runs_dir)
+    # One repository per table: keep the runs made on this config's dataset.
+    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
+    if report.is_file():
+        wanted = json.loads(report.read_text(encoding="utf-8")).get("dataset_hash")
+        runs = [r for r in runs if r.dataset_hash == wanted]
     if labels == "gold":
         runs = rescore_on_gold(
             runs, cfg.paths.runs_dir, cfg, parse_split(split), include_blind_pass=with_blind_pass
@@ -336,8 +350,9 @@ def results(
     if labels == "gold":
         table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / (f"{split}.md" if labels == "silver" else f"{split}-gold.md")
-    heading = f"# Results: {split} split ({labels} labels)"
+    stem = f"{name}-{split}" if name else split
+    out = out_dir / (f"{stem}.md" if labels == "silver" else f"{stem}-gold.md")
+    heading = f"# Results: {profile.repo}, {split} split ({labels} labels)"
     out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
     typer.echo(table)
     typer.echo(f"written to {out.as_posix()}")
@@ -1151,3 +1166,22 @@ def session_run(
         if outcome.stopped_reason:
             typer.echo(f"stopped: {outcome.stopped_reason}", err=True)
             raise typer.Exit(code=2)
+
+
+@session_app.command("import")
+def session_import(
+    session: Annotated[Path, typer.Argument(help="The session that was evaluated.")],
+    artifact_runs: Annotated[Path, typer.Argument(help="The `runs/` folder of the CI artifact.")],
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Copy a CI test evaluation into the run registry and next to its session file."""
+    from triagelab.eval.test_session import TestSetLockedError, import_runs
+
+    cfg = load_config(config)
+    try:
+        imported = import_runs(session, artifact_runs, cfg.paths.runs_dir)
+    except TestSetLockedError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=1) from err
+    for name, run_id in imported.items():
+        typer.echo(f"{name}: {run_id}")

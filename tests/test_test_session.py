@@ -135,3 +135,31 @@ def test_a_routed_fingerprint_covers_its_parts(workspace: Path) -> None:  # noqa
     edited = part.model_copy(update={"eval": part.eval.model_copy(update={"seed": 9})})
     base.write_text(yaml.safe_dump(edited.model_dump(mode="json")), encoding="utf-8")
     assert deep_fingerprint(routed) != before  # the top config's own bytes did not change
+
+
+def test_a_ci_evaluation_is_imported_next_to_its_session(workspace: Path, tmp_path: Path) -> None:  # noqa: F811
+    from triagelab.eval.test_session import import_runs
+
+    cfg = _config(workspace, "majority", name="final")
+    session = frozen(workspace, cfg)
+    outcome = _run(
+        load_config(workspace / "final.yaml"), split="test", session=session,
+        sessions_root=workspace,
+    )  # fmt: skip
+    artifact = workspace / "runs"  # what CI uploads
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    imported = import_runs(session, artifact, registry)
+    assert imported == {"final": outcome.run_id}
+    assert (registry / outcome.run_id / "predictions.jsonl").is_file()
+    records = session.with_suffix("") / "final"
+    assert {p.name for p in records.iterdir()} >= {
+        "predictions.jsonl",
+        "config.yaml",
+        "metrics.json",
+    }
+    assert b"\r\n" not in (records / "manifest.json").read_bytes()
+
+    other = frozen(workspace, _config(workspace, "majority", name="never-ran"))
+    with pytest.raises(TestSetLockedError, match="no test run for"):
+        import_runs(other, artifact, registry)

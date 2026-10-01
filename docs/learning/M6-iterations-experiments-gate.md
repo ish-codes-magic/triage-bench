@@ -58,7 +58,28 @@ PR + label run-eval ─► eval.yml (env approval) ─► eval pack ─► 50-is
 
 ## 3. Results
 
-_Filled in from the runs; see docs/ITERATIONS.md and reports/experiments/._
+All on dev, paired against the reference agent, scored on the adjudicated labels (n = 97). Silver results are alongside in the reports. Regenerate with `triagelab deltas reports/experiments/m6-ablations.yaml` and `.../m6-iterations.yaml`.
+
+**Iterations** ([log](../ITERATIONS.md)):
+
+| # | change | labels micro-F1 Δ | category Δ | decision |
+|---|---|---|---|---|
+| 6 | tools return each file's component | +0.023 (area **+0.060**) | code-location confusion 31 → 23 | kept |
+| 7 | required type label + central/incidental basis | −0.031 | failing issues 69 → 75 | reverted |
+| 8 | drop topic/OS labels under 0.95 confidence | **+0.056 [+0.037, +0.077]** | topic/OS over-labeling 42 → 8 | kept |
+
+**Ablations on the final harness:**
+
+| arm | labels Δ vs reference | what it says |
+|---|---|---|
+| E2: no skill / generic / CPython / auto | −0.014 … −0.005, none significant | H1 not supported at 9B |
+| E3: top-8 similar issues stuffed, no tools | −0.009 [−0.059, +0.037] at 1/6 the cost | H2 not supported: retrieval matters, tool use doesn't |
+| E4: planner + subagents | −0.042 [−0.081, +0.001] at half the cost | multi-agent didn't pay |
+| E5: Qwen3.5-27B | **+0.070 [+0.031, +0.110]** at 3.6× the cost | size helps on gold, not on silver (+0.010) |
+
+**Gate:**
+- Dry run against itself: PASS, with zero deltas.
+- Dry run against the single-shot baseline: FAIL (labels −0.151, components −0.100), exit 1.
 
 ## 4. Common pitfalls
 
@@ -68,6 +89,11 @@ _Filled in from the runs; see docs/ITERATIONS.md and reports/experiments/._
 - **Content that looks like a comment.** Issue refs contain `#`, so a subset file parser that strips everything after `#` deletes every ref. Comments now start only at the beginning of a line or after whitespace.
 - **Staging leaks.** A `git rm` staged for one commit rides along with the next `git commit` that runs after `git add` of other files. Check `git diff --cached --name-only` before every commit.
 - **Test data in "reserve" splits.** The eval pack first excluded only `test`; the `test_reserve` pool holds test-period issues too.
+- **Shared capacity isn't your capacity.** The 9B route's uptime figures looked normal while OpenRouter's *shared* DeepInfra pool answered most calls with 429. The owner's own provider key (BYOK) fixed it without changing model, route or price (ADR-0041).
+- **Replays measure the replay.** Re-running a config whose model answers are all cached is free and exact, but its latency is the replay's. The results table now prints "replay" instead of a misleading number.
+- **A post-processing win must be offered to the baselines too.** The confidence floor lifted the agent by +0.056, and the single-shot baseline by +0.06. The fair agent-vs-baseline gap is +0.075, not +0.13.
+- **An LLM tagger has its own noise.** Iteration 8 changed no trace, yet some category counts moved by ±4. Read category deltas smaller than that as noise.
+- **Tune on dev, then check the tuning.** The floor was picked by looking at dev. Cross-fitting (pick on one half, score on the other) gave the same threshold and the same score, so the choice didn't overfit.
 
 ## 5. How an interviewer might probe this
 

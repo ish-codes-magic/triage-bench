@@ -38,9 +38,13 @@ def test_body_and_files_point_at_each_other(directory: Path) -> None:
         assert mentioned in skill.resources(), f"the body points to missing {mentioned}"
 
 
-def test_cpython_component_map_matches_the_profile() -> None:
-    profile = load_profile(REPO_ROOT / "configs" / "repos" / "python__cpython.yaml")
-    text = (SKILLS / "triage-cpython" / "references" / "component_map.md").read_text("utf-8")
+@pytest.mark.parametrize(
+    ("skill", "profile_file"),
+    [("triage-cpython", "python__cpython.yaml"), ("triage-uv", "astral-sh__uv.yaml")],
+)
+def test_component_map_matches_the_profile(skill: str, profile_file: str) -> None:
+    profile = load_profile(REPO_ROOT / "configs" / "repos" / profile_file)
+    text = (SKILLS / skill / "references" / "component_map.md").read_text("utf-8")
     for component in profile.components:
         row = next(line for line in text.splitlines() if line.startswith(f"| `{component.name}`"))
         for prefix in component.prefixes:

@@ -84,3 +84,18 @@ def test_cached_encoder_encodes_each_text_once_across_instances(tmp_path: Path) 
     again = CachedEncoder(inner, tmp_path / "emb.npz").encode_documents(["crash", "docs typo"])
     assert inner.encoded == 2  # read back from disk
     np.testing.assert_array_equal(again, first[[1, 0]])
+
+
+def test_a_long_encode_is_saved_batch_by_batch(tmp_path: Path) -> None:
+    class Dies(KeywordEncoder):
+        def encode_documents(self, texts: Sequence[str]) -> Matrix:
+            if self.encoded >= 2:
+                raise KeyboardInterrupt  # killed mid-way
+            return super().encode_documents(texts)
+
+    cache = CachedEncoder(Dies(), tmp_path / "emb.npz", batch=2)
+    with pytest.raises(KeyboardInterrupt):
+        cache.encode_documents(["a", "b", "c", "d"])
+    inner = KeywordEncoder()
+    CachedEncoder(inner, tmp_path / "emb.npz").encode_documents(["a", "b", "c", "d"])
+    assert inner.encoded == 2  # the first batch survived the interruption

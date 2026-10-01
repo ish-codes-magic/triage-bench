@@ -58,9 +58,10 @@ class CachedEncoder:
     Training re-encodes ~4k issues otherwise (about 10 minutes on CPU).
     """
 
-    def __init__(self, encoder: Encoder, path: Path) -> None:
+    def __init__(self, encoder: Encoder, path: Path, *, batch: int = 256) -> None:
         self._encoder = encoder
         self._path = path
+        self.batch = batch
         self._vectors: dict[str, np.ndarray] = {}
         if path.is_file():
             with np.load(path) as data:
@@ -80,9 +81,11 @@ class CachedEncoder:
         missing = sorted(
             {k: t for k, t in zip(keys, texts, strict=True) if k not in self._vectors}.items()
         )
-        if missing:
-            fresh = self._encoder.encode_documents([t for _, t in missing])
-            self._vectors.update({k: v for (k, _), v in zip(missing, fresh, strict=True)})
+        # Batches, each saved: a long first encode that gets interrupted resumes where it was.
+        for start in range(0, len(missing), self.batch):
+            chunk = missing[start : start + self.batch]
+            fresh = self._encoder.encode_documents([t for _, t in chunk])
+            self._vectors.update({k: v for (k, _), v in zip(chunk, fresh, strict=True)})
             self._save()
         return np.stack([self._vectors[k] for k in keys]).astype(np.float32)
 

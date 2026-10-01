@@ -230,7 +230,10 @@ def bless(run_dir: Path, dest: Path, subset: list[str] | None = None) -> int:
             rows = [r for r in read_parquet(run_dir / name) if r["issue_ref"] in latest]
             write_parquet(dest / name, rows)
         else:
-            shutil.copyfile(run_dir / name, dest / name)
+            # The baseline is committed: LF and a final newline, even for records that an
+            # older run wrote on Windows with CRLF.
+            text = (run_dir / name).read_bytes().decode("utf-8").replace("\r\n", "\n")
+            (dest / name).write_bytes((text.rstrip("\n") + "\n").encode("utf-8"))
     return len(latest)
 
 

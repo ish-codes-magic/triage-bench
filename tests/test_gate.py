@@ -57,8 +57,10 @@ def test_identical_runs_pass_and_a_regression_fails(workspace: Path) -> None:  #
     base = _run(_config(workspace, "majority", name="gate-a")).run_dir
     cand = _run(_config(workspace, "majority", name="gate-b")).run_dir
     blessed = workspace / "baseline"
+    (base / "git_sha").write_bytes(b"abc123\r\n")  # as an older run wrote it on Windows
     bless(base, blessed)
     assert not (blessed / "traces.jsonl").exists()
+    assert (blessed / "git_sha").read_bytes() == b"abc123\n"  # committed records: LF
 
     report = check(blessed, cand, GATE)
     assert report.verdict == "pass"

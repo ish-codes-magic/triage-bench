@@ -921,3 +921,19 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - Every cascade number is reproducible from the run registry (`triagelab cascade reports/cascade/e7.yaml`).
 - The decision-level result (a $0.15-per-1,000 call matching the agent on type and component) is the strongest evidence for H3. Whether to *deploy* decisions that way, with the agent kept for labels, duplicates and the comment, is a design question for M8/M9.
+
+## ADR-0044: Code search uses the built-in scanner; ripgrep is opt-in
+
+**Context.**
+- ADR-0019's code search used ripgrep "when installed", with a pure-Python fallback.
+- The development machine has no ripgrep, so every recorded run, including the regression gate's baseline, used the fallback.
+- The two differ in more than speed: ripgrep skips hidden files and anything matched by `.gitignore`.
+- A CI runner with `rg` on its PATH would therefore have searched differently from the baseline it's compared with. This was found while preparing the gate's first CI run.
+
+**Decision.**
+- `CodeSearcher` uses the built-in scanner unless `use_ripgrep=True` is passed explicitly. An installed `rg` is never picked up on its own.
+- Evaluation always uses the scanner (1–5 s per query on the 140 MB tree, which is acceptable).
+
+**Consequences.**
+- Tool results are the same on every machine, so a CI candidate and a local baseline differ only by what the PR changed (and model sampling).
+- General rule recorded for the project: an evaluation's behaviour must not depend on which optional tools happen to be installed.

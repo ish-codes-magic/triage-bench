@@ -32,8 +32,12 @@ def _snippet(text: str) -> str:
 
 
 class CodeSearcher:
-    def __init__(self, root: Path, *, ripgrep: str | None = None, use_ripgrep: bool = True) -> None:
+    def __init__(
+        self, root: Path, *, ripgrep: str | None = None, use_ripgrep: bool = False
+    ) -> None:
         self.root = root
+        # Opt-in (ADR-0044): ripgrep also skips hidden and .gitignore'd files, so letting an
+        # installed `rg` switch itself on would make search results depend on the machine.
         self._rg = (ripgrep or shutil.which("rg")) if use_ripgrep else None
 
     def search(

@@ -26,7 +26,7 @@ from triagelab import wiring
 from triagelab.baselines.classifier import ClassifierTriager
 from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
 from triagelab.baselines.majority import MajorityTriager
-from triagelab.config import Config, read_subset
+from triagelab.config import Config, RoutedConfig, read_subset
 from triagelab.cost import BudgetExceededError
 from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile, load_profile
@@ -98,7 +98,7 @@ class RunOutcome(BaseModel):
 def build_triager(
     cfg: Config,
     profile: RepoProfile,
-    client: Callable[[], LLMClient],
+    client: Callable[[Config], LLMClient],
     *,
     run_id: str,
     run_dir: Path,
@@ -118,7 +118,13 @@ def build_triager(
     if cfg.system.decisions is not None:  # kind == "decisions"
         from triagelab.decisions.factory import build_decision_triager
 
-        return build_decision_triager(cfg, cfg.system.decisions, profile, train, client)
+        return build_decision_triager(
+            cfg, cfg.system.decisions, profile, train, lambda: client(cfg)
+        )
+    if cfg.system.routed is not None:  # kind == "routed"
+        return _build_routed(
+            cfg, cfg.system.routed, profile, client, run_id=run_id, run_dir=run_dir, stack=stack
+        )
     if cfg.system.agent is not None:  # kind == "agent" (the config validator pairs them)
         from triagelab.harness.factory import build_agent  # MCP/OTel imports only when needed
 
@@ -127,7 +133,7 @@ def build_triager(
             cfg.system.agent,
             profile,
             family_vocabulary(train, cfg.system.min_label_count),
-            client(),
+            client(cfg),
             max_body_chars=cfg.system.max_body_chars,
             family_label_min_confidence=cfg.system.family_label_min_confidence,
             run_id=run_id,
@@ -135,13 +141,62 @@ def build_triager(
             stack=stack,
         )
     return LLMSingleShotTriager(
-        client(),
+        client(cfg),
         cfg.llm,
         profile,
         family_vocabulary(train, cfg.system.min_label_count),
         max_body_chars=cfg.system.max_body_chars,
         family_label_min_confidence=cfg.system.family_label_min_confidence,
     )
+
+
+def _build_routed(
+    cfg: Config,
+    routed: RoutedConfig,
+    profile: RepoProfile,
+    client: Callable[[Config], LLMClient],
+    *,
+    run_id: str,
+    run_dir: Path,
+    stack: ExitStack,
+) -> Triager:
+    """Build every part from its own experiment config, in this run's environment."""
+    from triagelab.config import load_config
+    from triagelab.decisions.questions import QuestionId
+    from triagelab.decisions.routed import RoutedTriager
+
+    def part(path: Path) -> Config:
+        # The part contributes its model and system; where the data, cache and budget
+        # live is the routed run's decision.
+        sub = load_config(path)
+        return sub.model_copy(
+            update={
+                "dataset": cfg.dataset,
+                "paths": cfg.paths,
+                "cache": cfg.cache,
+                "budget": cfg.budget,
+                "tracing": cfg.tracing,
+            }
+        )
+
+    def build(sub: Config) -> Triager:
+        return build_triager(sub, profile, client, run_id=run_id, run_dir=run_dir, stack=stack)
+
+    deciders: dict[QuestionId, Triager] = {}
+    questions: tuple[tuple[QuestionId, Path | None], ...] = (
+        ("type", routed.type),
+        ("component", routed.component),
+    )
+    for qid, path in questions:
+        if path is None:
+            continue
+        sub = part(path)
+        if sub.system is None or sub.system.decisions is None:
+            raise ValueError(f"routed.{qid} must be a decisions config: {path}")
+        only = sub.system.decisions.model_copy(update={"questions": [qid]})
+        system = sub.system.model_copy(update={"decisions": only})
+        deciders[qid] = build(sub.model_copy(update={"system": system}))
+    return RoutedTriager(build(part(routed.base)), deciders, profile.taxonomy.type)
 
 
 def _subset(examples: list[EvalExample], refs: list[str], split: Split) -> list[EvalExample]:
@@ -229,8 +284,9 @@ def run_eval(
 
     clients: list[LLMClient] = []
 
-    def client() -> LLMClient:
-        clients.append(wiring.build_llm_client(cfg, run_id=run_id))
+    def client(for_cfg: Config) -> LLMClient:
+        # One client per (sub-)config: a routed system's parts use different routes.
+        clients.append(wiring.build_llm_client(for_cfg, run_id=run_id))
         return clients[-1]
 
     kind = cfg.system.kind if cfg.system else "?"

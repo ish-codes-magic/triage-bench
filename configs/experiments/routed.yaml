@@ -1,0 +1,15 @@
+# The routed system (M8, the final configuration): typed backends take the two routine
+# decisions and the stuffed agent does the rest. On dev it matches the full agent at
+# about 1/5 of the cost (docs/ITERATIONS.md, reports/cascade).
+#   type label <- one LLM call, confidence from logprobs   (E6: 0.87 vs the agent's 0.79)
+#   component  <- one LLM call, verbalized                 (E6: 0.84, equal to the agent)
+#   the rest   <- the stuffed agent (E3): other labels, duplicates, the comment
+extends: ../base.yaml
+name: routed
+eval: {concurrency: 8}
+system:
+  kind: routed
+  routed:
+    base: configs/experiments/e3-stuffed.yaml
+    type: configs/experiments/e6-llm-logprobs.yaml
+    component: configs/experiments/e6-llm-verbalized.yaml

@@ -47,6 +47,17 @@ class ScoredRun(BaseModel):
     dataset_hash: str
     metrics: dict[str, MetricScore]
     stats: SystemStats
+    # Every model call came from the cache: answers and costs are the original run's, but
+    # its latencies measure the replay, not the model.
+    replayed: bool = False
+
+
+def _replayed(run_dir: Path) -> bool:
+    cost_file = run_dir / "cost.json"
+    if not cost_file.is_file():
+        return False
+    cost = json.loads(cost_file.read_text(encoding="utf-8"))
+    return cost.get("calls", 0) > 0 and cost.get("cache_hits") == cost.get("calls")
 
 
 def load_scored_runs(runs_dir: Path) -> list[ScoredRun]:
@@ -70,6 +81,7 @@ def load_scored_runs(runs_dir: Path) -> list[ScoredRun]:
                 dataset_hash=manifest.details.get("dataset_hash", "unknown"),
                 metrics={k: MetricScore.model_validate(v) for k, v in metrics["metrics"].items()},
                 stats=SystemStats.model_validate(metrics["system"]),
+                replayed=_replayed(run_dir),
             )
         )
     return runs
@@ -99,9 +111,9 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
     lines = [header, "|" + "---|" * 9]
     for r in rows:
         cells = " | ".join(_cell(r.metrics.get(m)) for m in HEADLINE)
+        latency = "replay" if r.replayed else f"{r.stats.latency_ms_p50 / 1000:.1f}s"
         lines.append(
-            f"| {r.name} | {r.system} | {cells} | ${r.stats.cost_usd_per_issue:.5f} | "
-            f"{r.stats.latency_ms_p50 / 1000:.1f}s |"
+            f"| {r.name} | {r.system} | {cells} | ${r.stats.cost_usd_per_issue:.5f} | {latency} |"
         )
     hashes = sorted({r.dataset_hash[:12] for r in rows})
     lines += [
@@ -112,6 +124,11 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
         + ", ".join(f"`{r.run_id}`" for r in rows)
         + ".",
     ]
+    if any(r.replayed for r in rows):
+        lines.append(
+            '\n"replay": the run re-used every model answer from the cache (a post-processing '
+            "change), so its latency measures the replay; the live run's latency applies."
+        )
     return "\n".join(lines) + "\n"
 
 

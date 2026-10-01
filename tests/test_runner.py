@@ -239,3 +239,12 @@ def test_a_subset_cannot_reach_another_split(workspace: Path) -> None:
     subset.write_text(test_issue.snapshot.issue_ref + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="not in the dev split"):
         _run(_with_subset(_config(workspace, "majority"), subset))
+
+
+def test_a_fully_replayed_run_shows_no_latency(workspace: Path) -> None:
+    run = _run(_config(workspace, "majority", name="e-a")).run_dir
+    cost = json.loads((run / "cost.json").read_text(encoding="utf-8"))
+    (run / "cost.json").write_text(json.dumps({**cost, "calls": 5, "cache_hits": 5}), "utf-8")
+    table = results_table(load_scored_runs(workspace / "runs"), "dev")
+    assert "| replay |" in table
+    assert "measures the replay" in table

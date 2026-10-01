@@ -169,6 +169,36 @@ Each experiment is a config file that differs from the reference agent in **one*
 - **What CI downloads:** a checksummed eval pack with nothing from the test period: no table rows, and no retrieval history. Both cuts are re-checked on unpacking.
 - **Dry runs:** a [pass](reports/gate/dry-run.md) and a [fail](reports/gate/dry-run-regression.md).
 
+## When to trust a cheap answer (M7): typed decisions, calibration, a cascade
+
+Two routine decisions, the issue's **type label** and its **component**, are asked as single typed questions. Three backends answer each, with a confidence. Dev split, adjudicated labels (n = 97). → [calibration report](reports/calibration/e6-gold.md), [cascade report](reports/cascade/e7-gold.md)
+
+| type label | accuracy | mean confidence | ECE | AURC (lower is better) | $ per 1,000 issues |
+|---|---|---|---|---|---|
+| one LLM call, confidence from **logprobs** | **0.87 [0.79, 0.93]** | 0.87 | **0.095** | **0.048** | $0.15 |
+| one LLM call, **verbalized** confidence | 0.81 [0.73, 0.89] | 0.98 | 0.162 | 0.120 | $0.16 |
+| embedding classifier | 0.75 [0.67, 0.84] | 0.73 | 0.131 | 0.066 | $0 |
+| the full agent (its own confidences) | 0.79 [0.71, 0.88] | 0.89 | 0.103 | 0.151 | $6.73 |
+
+![type reliability diagrams](reports/figures/e6-gold-type-reliability.png)
+
+- **H3 (a decision model with escalation matches the agent on routine decisions, at a fraction of the cost): supported here.**
+  - One call matches or beats the full agent on both routine decisions, at **about 2% of the cost**.
+  - Type label: 0.87 vs 0.79 (+0.072 [−0.031, +0.186]).
+  - Component: 0.84 vs 0.84.
+  - So the architecture should route decisions, not whole issues. The agent's value is in duplicate search and the triage comment.
+- **H5 (are the confidences calibrated?): it depends on where the confidence comes from.**
+  - **Verbalized confidence is uninformative:** almost every answer says 0.98, so it can't tell right from wrong.
+  - **Token logprobs are the best LLM signal**, both calibrated and discriminating.
+  - On the type decision, every source is badly calibrated on very short issues (ECE 0.27–0.44, n = 9).
+- **Issue-level cascade (stuffed agent → full agent):**
+  - The cheap tier already matches the full agent within 0.01 on labels, at 1/6 the cost.
+  - A self-confidence gate matches the agent while escalating 4% of issues ($1.38 vs $6.84 per 1,000).
+  - Cross-fitted, the threshold escalates 2% and lands near the cheap tier: there's little left to escalate.
+- **Jev wasn't available** (`jev_access: no`). The decision layer is a protocol with LLM and classifier backends, and Jev would be one more implementation.
+
+![cascade curves](reports/figures/e7-gold-cascade.png)
+
 ## Measuring the measurement (M5): label noise, adjudicated labels, a calibrated judge
 
 **Provenance first.** At the owner's request, the adjudicated ("gold") labels and the comment ratings in this section were made by a **model annotator** (Claude Opus 5.5), not a person. Every record says so (ADR-0035).
@@ -268,6 +298,10 @@ The process was the one designed for a human:
 - **Jobs that survive being killed.**
   - The 12k-issue embedding build is resumable and keyed by issue number, with atomic chunk writes.
   - It was stopped twice under memory pressure and finished without redoing work.
+- **Calibration and cascades written by hand.**
+  - Reliability diagrams (equal-width and equal-mass bins), ECE, Brier, risk–coverage and AURC, with bootstrap intervals and input slices.
+  - Logprob confidences pool the option letter's token variants.
+  - Cascades are recombined exactly from stored runs, and thresholds are chosen on dev with 2-fold cross-fitting. → [ADR-0043](docs/DECISIONS.md#adr-0043-the-cascade-is-evaluated-offline-at-two-granularities-with-cross-fitted-thresholds)
 - **Free re-scoring by cache replay.** A post-processing change re-runs every experiment from cached model answers: identical requests, $0, and byte-identical answers, verified by matching answer costs.
 - **Safe parallel runs.** The spend ledger is appended under a cross-process OS lock, after two Windows processes interleaved their appends and lost an entry. A 4-process stress test guards it. → [ADR-0037](docs/DECISIONS.md#adr-0037-the-spend-ledger-is-appended-under-a-cross-process-file-lock)
 - **Run provenance.**
@@ -295,7 +329,7 @@ The process was the one designed for a human:
 - [x] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
 - [x] **M5 Gold labels, judge, failure taxonomy** (labels by a model annotator, ADR-0035)
 - [x] **M6 Iteration loop + LLM regression gate in CI:** iterations 6–8, ablations E2–E5, `eval.yml`
-- [ ] **M7 Decision layer:** Jev, LLM and classifier backends, calibration, cascade
+- [x] **M7 Decision layer:** LLM (verbalized, logprobs) and classifier backends, calibration, cascade (Jev: no access)
 - [ ] **M8 Transfer repo + one-time test-set evaluation**
 - [ ] **M9 Report, results site, demo**
 

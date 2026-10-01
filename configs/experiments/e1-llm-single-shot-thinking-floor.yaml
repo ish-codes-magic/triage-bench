@@ -1,0 +1,5 @@
+# The single-shot baseline with the agent's confidence floor (iteration 8): the same
+# answers as e1-llm-single-shot-thinking, post-processed the same way as the agent's.
+extends: e1-llm-single-shot-thinking.yaml
+name: e1-llm-single-shot-thinking-floor
+system: {kind: llm_single_shot, family_label_min_confidence: 0.95}

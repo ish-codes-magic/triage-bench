@@ -1,0 +1,8 @@
+# M6 iterations (docs/ITERATIONS.md): each row is one change against the run before it.
+title: "M6 iterations, dev (n = 100)"
+reference: 20260930-000255-agent-cf734a
+metrics: [t1_micro_f1, t1_macro_f1, t1_type_micro_f1, t1_area_micro_f1, t2_link_f1, t3_accuracy, t3_top3_accuracy]
+comparisons:
+  - {name: "6: tools name each file's component (kept)", a: reference, b: 20260930-122125-agent-deb407}
+  - {name: "7: one type label + central/incidental basis (reverted)", a: 20260930-122125-agent-deb407, b: 20260930-213951-agent-f93e7d}
+  - {name: "8: drop topic/OS labels under 0.95 confidence (kept)", a: 20260930-122125-agent-deb407, b: 20260930-233640-agent-1f32af}

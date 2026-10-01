@@ -1,0 +1,9 @@
+# E6: how well does each decision source's confidence predict its own correctness?
+# Regenerate with: triagelab calibration reports/calibration/e6.yaml --labels gold
+title: "E6: decision backends and their confidences, dev"
+sources:
+  classifier (embeddings + LR): 20261001-073202-e6-classifier-8d261e
+  LLM, verbalized: 20261001-075558-e6-llm-verbalized-ddb893
+  LLM, logprobs: 20261001-075558-e6-llm-logprobs-f968e2
+  stuffed agent (E3), own conf.: 20261001-000322-e3-stuffed-c7868d
+  agent, own conf.: 20260930-233640-agent-1f32af

@@ -1,0 +1,14 @@
+# E6 (decision backends, H3/H5): Qwen3.5-9B answers the type and component questions,
+# with its confidence taken from the probability it states in a JSON reply.
+# Both LLM arms share one logprob-capable route, Venice fp8 (ADR-0042: Parasail bf16's
+# shared pool was saturated); thinking is off for both (decisions/llm.py).
+extends: ../base.yaml
+name: e6-llm-verbalized
+llm:
+  route: {provider: venice, quantization: fp8}
+  reasoning: none
+  max_tokens: 200
+eval: {concurrency: 8}
+system:
+  kind: decisions
+  decisions: {backend: llm, confidence: verbalized}

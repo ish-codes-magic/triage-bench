@@ -29,6 +29,12 @@ models:
     source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints
     verified_on: 2026-09-29
     notes: Decision-backend route. Logprobs + JSON schema at full precision; no tools.
+  openrouter/qwen/qwen3.5-9b@venice/fp8:
+    input_per_mtok: 0.10
+    output_per_mtok: 0.15
+    source: https://openrouter.ai/api/v1/models/qwen/qwen3.5-9b/endpoints
+    verified_on: 2026-10-01
+    notes: E6 LLM decision backends (logprobs). Parasail's shared pool was saturated (ADR-0042).
   openrouter/qwen/qwen3.5-27b@alibaba:
     input_per_mtok: 0.195
     output_per_mtok: 1.56

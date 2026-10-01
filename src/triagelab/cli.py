@@ -1115,7 +1115,9 @@ def session_freeze(
     profile_path: ProfileOpt,
     configs: Annotated[list[Path], typer.Option("--config", "-c", help="A config to evaluate.")],
     note: Annotated[str, typer.Option(help="Why this session exists.")] = "",
-    config: ConfigOpt = DEFAULT_CONFIG,
+    base_config: Annotated[
+        Path, typer.Option("--base-config", help="Where the data and reports live.")
+    ] = DEFAULT_CONFIG,
 ) -> None:
     """Declare a test evaluation: the configs, the code they run on, and the dataset.
 
@@ -1127,7 +1129,7 @@ def session_freeze(
     from triagelab.data.profile import load_profile
     from triagelab.eval.test_session import TestSetLockedError, freeze
 
-    cfg = load_config(config)
+    cfg = load_config(base_config)
     profile = load_profile(profile_path)
     report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
     dataset_hash = str(json.loads(report.read_text(encoding="utf-8"))["dataset_hash"])

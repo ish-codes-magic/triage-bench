@@ -163,3 +163,22 @@ def test_a_ci_evaluation_is_imported_next_to_its_session(workspace: Path, tmp_pa
     other = frozen(workspace, _config(workspace, "majority", name="never-ran"))
     with pytest.raises(TestSetLockedError, match="no test run for"):
         import_runs(other, artifact, registry)
+
+
+def test_freeze_from_the_command_line(
+    workspace: Path,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typer.testing import CliRunner
+
+    from triagelab.cli import app
+
+    cfg_path = on_disk(workspace, _config(workspace, "majority", name="final"))
+    monkeypatch.chdir(workspace)
+    args = ["test-session", "freeze", "-p", str(PROFILE_PATH), "-c", str(cfg_path),
+            "--base-config", str(cfg_path), "--note", "why"]  # fmt: skip
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    session = load_session(workspace / "reports" / "test-eval" / SLUG / "session-1.yaml")
+    assert [c.name for c in session.configs] == ["final"]
+    assert session.note == "why"

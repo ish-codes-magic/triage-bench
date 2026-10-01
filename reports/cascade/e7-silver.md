@@ -31,3 +31,39 @@ Cascade at the chosen τ minus the full agent (paired bootstrap, 1,000 resamples
 ![cascade curve](../figures/e7-silver-cascade.png)
 
 Cross-fitted rows route each issue by the τ chosen on the other half of dev, so they estimate what the chosen τ does on unseen issues.
+
+## Decision level (H3): the backend decides when confident, the agent otherwise
+
+| question | system | τ | escalated | accuracy | cost / 1,000 issues |
+|---|---|---|---|---|---|
+| type | agent alone | | 100% | 0.833 | $6.81 |
+| type | LLM (logprobs) alone |  | 0% | 0.869 | $0.16 |
+| type | LLM (logprobs) -> agent | 0.412 | 0% | 0.869 | $0.16 |
+| type | LLM (logprobs) -> agent, cross-fitted (τ 0.41, 0.47) |  | 1% | 0.869 | $0.17 |
+| type | LLM (verbalized) alone |  | 0% | 0.869 | $0.17 |
+| type | LLM (verbalized) -> agent | 0.950 | 0% | 0.869 | $0.17 |
+| type | LLM (verbalized) -> agent, cross-fitted (τ 0.95, 0.99) |  | 25% | 0.845 | $1.81 |
+| type | classifier alone |  | 0% | 0.833 | $0.00 |
+| type | classifier -> agent | 0.402 | 0% | 0.833 | $0.00 |
+| type | classifier -> agent, cross-fitted (τ 0.43, 0.57) |  | 12% | 0.857 | $0.94 |
+| component | agent alone | | 100% | 0.778 | $7.10 |
+| component | LLM (logprobs) alone |  | 0% | 0.685 | $0.12 |
+| component | LLM (logprobs) -> agent | 0.675 | 15% | 0.778 | $1.35 |
+| component | LLM (logprobs) -> agent, cross-fitted (τ 0.76, 0.68) |  | 17% | 0.796 | $1.48 |
+| component | LLM (verbalized) alone |  | 0% | 0.815 | $0.13 |
+| component | LLM (verbalized) -> agent | 0.950 | 0% | 0.815 | $0.13 |
+| component | LLM (verbalized) -> agent, cross-fitted (τ 0.95, 0.95) |  | 0% | 0.815 | $0.13 |
+| component | classifier alone |  | 0% | 0.574 | $0.00 |
+| component | classifier -> agent | 0.423 | 44% | 0.778 | $2.89 |
+| component | classifier -> agent, cross-fitted (τ 0.32, 0.54) |  | 46% | 0.685 | $3.43 |
+
+Accuracy of the decision cascade at the chosen τ minus the agent's (paired bootstrap):
+
+| question | backend | Δ accuracy [95% CI] |
+|---|---|---|
+| type | LLM (logprobs) | +0.036 [-0.071, +0.131] |
+| type | LLM (verbalized) | +0.036 [-0.060, +0.131] |
+| type | classifier | +0.000 [-0.095, +0.095] |
+| component | LLM (logprobs) | +0.000 [-0.111, +0.111] |
+| component | LLM (verbalized) | +0.037 [-0.056, +0.130] |
+| component | classifier | +0.000 [-0.093, +0.093] |

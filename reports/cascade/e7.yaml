@@ -10,3 +10,7 @@ gates:
   agrees with LLM (logprobs): {kind: agreement, run: 20261001-075558-e6-llm-logprobs-f968e2}
   agrees with LLM (verbalized): {kind: agreement, run: 20261001-075558-e6-llm-verbalized-ddb893}
   agrees with classifier: {kind: agreement, run: 20261001-073202-e6-classifier-8d261e}
+decision_backends:
+  LLM (logprobs): 20261001-075558-e6-llm-logprobs-f968e2
+  LLM (verbalized): 20261001-075558-e6-llm-verbalized-ddb893
+  classifier: 20261001-073202-e6-classifier-8d261e

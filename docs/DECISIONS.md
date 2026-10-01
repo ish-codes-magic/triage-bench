@@ -1000,6 +1000,12 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - After publication the test issues and their silver labels are public. That's acceptable only because every decision is frozen first.
 - A session pins the exact code: the evaluation has to run before any further change to `src`, `skills` or `configs`.
 
+**As run (2026-10-02).**
+- Session 1 of both repositories was frozen in commit `682f46a` on one code hash (`6de34cd0…`), five configs each.
+- The packs were published only after that commit was pushed: releases `testpack-python__cpython-v1` and `testpack-astral-sh__uv-v1`, both targeting the freeze commit, each with its SHA-256 in the release notes.
+- GitHub dispatches only workflows that exist on the default branch, so `test-eval.yml` reached `main` through its own small PR (#8) and is dispatched against the M8 branch, where the session files live.
+- Freezing through the real command found a bug the unit tests had missed (two `--config` options on `test-session freeze`). It was fixed before the freeze, and the command now has a test that goes through the CLI.
+
 ## ADR-0047: Repository-specific prompt wording lives in the profile
 
 **Context.**

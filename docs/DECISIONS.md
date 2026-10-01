@@ -937,3 +937,29 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - Tool results are the same on every machine, so a CI candidate and a local baseline differ only by what the PR changed (and model sampling).
 - General rule recorded for the project: an evaluation's behaviour must not depend on which optional tools happen to be installed.
+
+## ADR-0045: The transfer repo is astral-sh/uv, with a label-provenance caveat
+
+**Context.**
+- ADR-0011 chose uv tentatively and required the same label-provenance scan before M8.
+- The scan (2026-10-01, 281 eval-window issues):
+  - **T1:** 188 of 261 taxonomy labels were applied by the issue's author (uv's issue forms attach `bug`, `enhancement` or `question`); 72 by triagers. A maintainer triaged 26–32% of issues (CPython: 70%). `area:*` labels are sparse.
+  - The form doesn't fully decide the type: `bug` and `enhancement` share one form, and on train 277 form-filed issues were relabelled `question` by maintainers.
+  - **T2:** 85 structured duplicate closures. **T3:** fixing PRs link natively (about 20% of issues). **T4:** `needs-mre` (5%) is a real needs-information label, which CPython's `pending` wasn't (ADR-0036).
+- The owner decided to keep uv, with the caveats recorded (2026-10-01).
+
+**Decision.**
+- **Profile** (`configs/repos/astral-sh__uv.yaml`): written from the label list and the directory layout at the freeze commit only.
+  - type = bug, enhancement, question, documentation;
+  - family = `area:*`;
+  - 11 components by functional group of crates.
+- **Windows:** the same as the primary repo.
+- **uv's dev split** is built but never evaluated or tuned on. Transfer means swapping the profile and the skill, and nothing else (E8, H4).
+- **Reporting:**
+  - headline transfer numbers use the adjudicated test labels;
+  - type labels are also reported on the maintainer-triaged subset;
+  - the provenance numbers go in the dataset card.
+
+**Consequences.**
+- Silver T1 on uv partly measures "which form did the author pick". It's a lower bound on label quality, not a triage ground truth.
+- uv gives the project its first valid T4 evaluation.

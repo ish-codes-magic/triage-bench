@@ -1022,6 +1022,14 @@ def deltas(
     typer.echo(f"written to {out.as_posix()}")
 
 
+def _echo_report(text: str) -> None:
+    """Echo a report on any console: a Windows cp1252 console can't print e.g. "τ"."""
+    import sys
+
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    typer.echo(text.encode(encoding, errors="replace").decode(encoding))
+
+
 @app.command()
 def calibration(
     spec_path: Annotated[Path, typer.Argument(help="A calibration spec (title, sources).")],
@@ -1037,5 +1045,26 @@ def calibration(
     text = build_report(spec, cfg.paths.runs_dir, _labels(labels), figures_dir, spec_path.stem)
     out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
     out.write_bytes(text.encode())
-    typer.echo(text)
+    _echo_report(text)
+    typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def cascade(
+    spec_path: Annotated[Path, typer.Argument(help="A cascade spec (cheap, full, gates).")],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+    figures_dir: Annotated[Path, typer.Option("--figures-dir")] = Path("reports/figures"),
+) -> None:
+    """The cascade curve per gate, the dev-chosen τ, and a paired comparison with the full
+    agent. Offline: recombines stored runs. Writes <spec>-<labels>.md next to the spec."""
+    from triagelab.eval.cascade_report import CascadeSpec, build_cascade_report
+
+    spec = CascadeSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(DEFAULT_CONFIG)
+    text = build_cascade_report(
+        spec, cfg.paths.runs_dir, _labels(labels), figures_dir, spec_path.stem
+    )
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(text.encode())
+    _echo_report(text)
     typer.echo(f"written to {out.as_posix()}")

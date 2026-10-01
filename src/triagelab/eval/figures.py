@@ -11,6 +11,7 @@ matplotlib.use("Agg")  # headless: CI runners and scripts have no display
 
 import matplotlib.pyplot as plt  # after choosing the backend
 
+from triagelab.decisions.cascade import CascadePoint
 from triagelab.eval.calibration import ece, reliability_bins, risk_coverage
 from triagelab.eval.calibration_report import Outcome
 
@@ -73,6 +74,38 @@ def risk_coverage_figure(series: Mapping[str, Sequence[Outcome]], title: str, pa
     ax.set_title(title, fontsize=10)
     ax.legend(fontsize=8, loc="lower left")
     ax.grid(alpha=0.3)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def cascade_figure(
+    curves: Mapping[str, Sequence[CascadePoint]],
+    references: Mapping[str, CascadePoint],
+    metrics: Sequence[str],
+    title: str,
+    path: Path,
+) -> None:
+    """Each metric against the share escalated (left) and against cost (right)."""
+    fig, axes = plt.subplots(len(metrics), 2, figsize=(9.5, 3.4 * len(metrics)), squeeze=False)
+    for row, metric in zip(axes, metrics, strict=True):
+        for name, points in curves.items():
+            row[0].plot([100 * p.escalated for p in points], [p.metrics[metric] for p in points],
+                        marker=".", label=name)  # fmt: skip
+            row[1].plot([p.cost_per_1000 for p in points], [p.metrics[metric] for p in points],
+                        marker=".", label=name)  # fmt: skip
+        for name, ref in references.items():
+            row[1].scatter([ref.cost_per_1000], [ref.metrics[metric]], marker="*", s=120, zorder=3)
+            row[1].annotate(name, (ref.cost_per_1000, ref.metrics[metric]), fontsize=8,
+                            xytext=(4, -10), textcoords="offset points")  # fmt: skip
+        row[0].set_xlabel("issues escalated to the full agent (%)")
+        row[1].set_xlabel("cost per 1,000 issues ($)")
+        for ax in row:
+            ax.set_ylabel(metric)
+            ax.grid(alpha=0.3)
+    axes[0][0].legend(fontsize=8, loc="lower right")
+    fig.suptitle(title, fontsize=10)
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150)

@@ -292,5 +292,5 @@ def test_failure_table_lists_tagged_runs_only(workspace: Path) -> None:
     table = failure_table(spec, workspace / "runs")
     assert table is not None
     assert "| run | failing issues | x | y |" in table
-    assert f"| E9 (`{b[-6:]}`) | 2 | 2 | 1 |" in table
+    assert f"| E9: b (`{b[-6:]}`) | 2 | 2 | 1 |" in table
     assert "reference" not in table.split("\n\n")[0]  # untagged runs are left out

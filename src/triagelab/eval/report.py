@@ -340,7 +340,7 @@ def failure_table(spec: DeltaSpec, runs_dir: Path, top: int = 6) -> str | None:
     for c in spec.comparisons:
         for run_id in (c.a, c.b):
             if run_id != "reference":
-                named.setdefault(run_id, c.name.split(":")[0] if ":" in c.name else c.name)
+                named.setdefault(run_id, c.name)
     counts: dict[str, Counter[str]] = {}
     failing: dict[str, int] = {}
     for run_id in named:

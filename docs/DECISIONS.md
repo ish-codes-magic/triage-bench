@@ -999,3 +999,27 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - "Evaluated once" is enforced by code and by the workflow, not by convention, and the freeze covers prompts as well as configs.
 - After publication the test issues and their silver labels are public. That's acceptable only because every decision is frozen first.
 - A session pins the exact code: the evaluation has to run before any further change to `src`, `skills` or `configs`.
+
+## ADR-0047: Repository-specific prompt wording lives in the profile
+
+**Context.**
+- A smoke run of the uv configs on 12 **train** issues (never dev or test) showed that 20% of model calls ran into the 4,000-token output limit and 2 of 12 issues ended as fallbacks. On CPython dev the rate is 0.3%.
+- The shared prompt still carried CPython wording from iteration 1:
+  - "area labels have no prefix (write `stdlib`, never `area-stdlib`)", while uv's area labels are literally `area:windows`;
+  - headings that put uv's `performance`/`compatibility` under "Area labels" and its `area:` labels under "Topic and OS labels";
+  - the single-shot prompt's "one type-* label".
+- H4 says a new repository needs only a new skill and profile. A repo rule hard-coded in the harness contradicts that.
+
+**Decision.**
+- `RepoProfile.wording` (`PromptWording`) holds the label note, the two headings and the single-shot phrase, with neutral defaults.
+- CPython's profile states the exact words that used to be hard-coded, so its prompts are byte-identical (cache, cassettes and results unchanged; a test pins the text).
+- uv's profile states its own wording.
+- Nothing else in the harness changed.
+
+**Consequences.**
+- On the same 12 train issues, with the uv wording:
+  - calls at the output limit fell from 7 of 35 to 3 of 33;
+  - fallbacks fell from 2 to 0;
+  - median latency fell from 100 s to 34 s.
+- The remaining loops are the 9B model's own indecision (question vs. documentation; wanting to verify code it has no tool for). The harness bounds them (output cap, then a nudge), and the rate is reported as a transfer finding.
+- This is a correction to the transfer claim: the harness was not repo-neutral until this change. It was found before any uv dev or test issue was evaluated.

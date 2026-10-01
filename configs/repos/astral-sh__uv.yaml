@@ -27,6 +27,13 @@ taxonomy:
   area: [performance, compatibility, internal, security]
   prefixes: ["area:"]
 
+# How the labels are described in prompts (ADR-0047).
+wording:
+  label_note: '; "area:" is part of an area label''s name'
+  area_heading: Other labels
+  family_heading: Area labels
+  single_shot_labels: normally one kind label, plus other and area labels that clearly apply
+
 # T4. "Needs more information for reproduction".
 needs_info_labels: [needs-mre]
 

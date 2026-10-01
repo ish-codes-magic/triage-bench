@@ -25,13 +25,14 @@ def component_lines(profile: RepoProfile) -> str:
 def vocabulary(profile: RepoProfile, family_labels: Sequence[str]) -> str:
     # Iteration 1 (docs/ITERATIONS.md): v1 printed "- area: stdlib, ..." and the model wrote
     # "area-stdlib" on 57% of issues. Labels are now listed as exact strings to copy.
-    tax = profile.taxonomy
+    # The repository-specific words come from the profile (ADR-0047): the sentence above
+    # was once hard-coded here and contradicted uv's `area:` labels.
+    tax, words = profile.taxonomy, profile.wording
     return (
-        "Allowed labels. Copy them exactly as written; area labels have no prefix "
-        '(write "stdlib", never "area-stdlib").\n'
+        f"Allowed labels. Copy them exactly as written{words.label_note}.\n"
         f"Type labels (pick one): {', '.join(tax.type)}\n"
-        f"Area labels (any that apply): {', '.join(tax.area)}\n"
-        f"Topic and OS labels (any that apply): {', '.join(family_labels)}\n\n"
+        f"{words.area_heading} (any that apply): {', '.join(tax.area)}\n"
+        f"{words.family_heading} (any that apply): {', '.join(family_labels)}\n\n"
         f"Components:\n{component_lines(profile)}"
     )
 

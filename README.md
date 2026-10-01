@@ -114,9 +114,60 @@ Our own agent loop over the `repo-intel` MCP server, with the CPython Agent Skil
     - a one-line **schema** fix (a required top-3 field: +0.15 top-3, and +0.07 top-1 as a side effect);
     - a **mechanical** repeat guard (−9% cost at equal accuracy).
   - **Didn't work:** *telling* the model how to behave. Forcing the repository skill into context changed nothing measurable, and in-context "you already searched this" notes didn't stop the rephrasing.
-  - **Consequence for H1** (do skills help?): the answer at 9B is so far **no**. E5 tests whether a larger model follows the same guidance.
+  - **Consequence for H1** (do skills help?): at 9B, **no**. M6's ablations confirm it, and show what does matter (below).
 
 Agent behaviour: [v1](reports/agent/dev-agent-v1.md) and [after iteration 5](reports/agent/dev-agent-iter5.md) (`triagelab runs stats`). Traces: JSONL per run, plus OpenTelemetry spans viewable in Arize Phoenix.
+
+## What actually matters (M6): seven ablations, three iterations, one regression gate
+
+Each experiment is a config file that differs from the reference agent in **one** block. Each is compared with the reference by a paired bootstrap on the same issues. Dev split, scored on the adjudicated labels (n = 97). Silver results and every interval: [reports/experiments](reports/experiments/m6-ablations-gold.md).
+
+| system | labels micro-F1 | duplicate link-F1 | component acc. | $/issue | p50 latency |
+|---|---|---|---|---|---|
+| TF-IDF classifier | 0.72 [0.67, 0.77] | 0.11 | 0.72 | $0 | 0.1 s |
+| single-shot LLM, thinking + confidence floor | 0.76 [0.71, 0.80] | 0.00 | 0.76 | $0.0003 | 23 s |
+| **agent (reference, after iterations 6–8)** | **0.83 [0.78, 0.88]** | 0.29 | 0.84 | $0.0068 | 89 s |
+| E2: agent without any skill | 0.82 [0.77, 0.86] | 0.36 | 0.85 | $0.0067 | 81 s |
+| E3: **no tools**, top-8 similar issues pasted in | 0.82 [0.78, 0.87] | 0.40 | 0.84 | **$0.0011** | 69 s |
+| E4: planner + 2 subagents + synthesizer | 0.79 [0.75, 0.83] | 0.18 | 0.86 | $0.0036 | 111 s |
+| E5: same harness, Qwen3.5-27B | **0.90 [0.86, 0.94]** | 0.45 | **0.91** | $0.0243 | 76 s |
+
+**Findings, negative ones included:**
+
+- **H1 (skills help): not supported at 9B.**
+  - No skill variant differs from *no skill* on any metric. That covers a generic skill, the hand-written CPython skill and one generated automatically from CONTRIBUTING and the train split, all loaded on the first call.
+  - CPython skill vs. none on labels: +0.008 [−0.030, +0.049].
+  - The 27B, by contrast, loads the skill unprompted on 72% of issues (the 9B: about 1%).
+- **H2 (on-demand tools beat stuffing): not supported.**
+  - Pasting the 8 most similar earlier issues into the prompt matches the tool-using agent on every metric: labels −0.009 [−0.059, +0.037], components ±0.000.
+  - It costs **1/6** as much.
+  - The agent's real lead over a single LLM call (+0.075 [+0.027, +0.127] on labels, with the same post-processing on both) comes from *retrieving labelled neighbours*, not from multi-step tool use.
+- **Multi-agent didn't pay.** Narrow roles halved the cost but slightly hurt labels (−0.042 [−0.081, +0.001]) and duplicate finding (−0.10).
+- **Model size did.**
+  - The 27B on the identical harness is the only arm significantly better than the reference: labels **+0.070 [+0.031, +0.110]**, type **+0.095**, area **+0.092**, at 3.6× the cost.
+  - **Caveat:** on silver labels the gain shrinks to +0.010 (not significant). The adjudicated labels come from an LLM annotator, which may favour a stronger model's answers.
+- **Iterations** (→ [log](docs/ITERATIONS.md)): two kept, one reverted.
+
+  | iteration | change | effect | decision |
+  |---|---|---|---|
+  | 6 | tools return the component that owns each file | area labels +0.060; target category −8 | kept |
+  | 7 | stricter answer schema | worse | reverted |
+  | 8 | drop topic/OS labels the model gives < 0.95 confidence | labels **+0.056 [+0.037, +0.077]**; over-labeling 42 → 8 | kept |
+
+  - Iteration 8's floor was chosen on dev and confirmed by cross-fitting.
+  - The lesson across iterations 3–8: with a 9B model, change what the harness computes and filters, not what the model is asked to judge.
+
+**The regression gate** ([`eval.yml`](.github/workflows/eval.yml), → [ADR-0040](docs/DECISIONS.md#adr-0040-the-real-api-regression-gate-fixed-subset-blessed-baseline-point-estimate-thresholds)):
+- **How it runs:**
+  - A PR labelled `run-eval` runs the reference agent for real on a fixed 50-issue subset, behind an approval-protected environment and a $1 cap.
+  - The run is compared with a committed, blessed baseline, and a delta table with paired-bootstrap intervals and failure-category deltas is posted on the PR.
+- **When it fails:**
+  - a headline metric drops beyond its threshold;
+  - cost per issue rises by more than 30%;
+  - fallback answers exceed 6%;
+  - any baseline issue is missing.
+- **What CI downloads:** a checksummed eval pack with every test-period row removed at packing time.
+- **Dry runs:** a [pass](reports/gate/dry-run.md) and a [fail](reports/gate/dry-run-regression.md).
 
 ## Measuring the measurement (M5): label noise, adjudicated labels, a calibrated judge
 
@@ -217,6 +268,8 @@ The process was the one designed for a human:
 - **Jobs that survive being killed.**
   - The 12k-issue embedding build is resumable and keyed by issue number, with atomic chunk writes.
   - It was stopped twice under memory pressure and finished without redoing work.
+- **Free re-scoring by cache replay.** A post-processing change re-runs every experiment from cached model answers: identical requests, $0, and byte-identical answers, verified by matching answer costs.
+- **Safe parallel runs.** The spend ledger is appended under a cross-process OS lock, after two Windows processes interleaved their appends and lost an entry. A 4-process stress test guards it. → [ADR-0037](docs/DECISIONS.md#adr-0037-the-spend-ledger-is-appended-under-a-cross-process-file-lock)
 - **Run provenance.**
   - Every run records its resolved config, config fingerprint, git SHA (flagged if dirty), versions and cost.
   - Run folders are claimed atomically and never overwritten.
@@ -226,7 +279,11 @@ The process was the one designed for a human:
   - An Ubuntu + Windows test matrix, and Dependabot for both actions and the `uv` lockfile.
   - A path-filtered MCP workflow runs the MCP client contract tests and builds the wheel only when the server or retrieval code changes.
   - **CI for an LLM agent:** every PR replays a 10-issue agent eval from recorded model responses (cassettes) through the real stdio MCP server. It's free and deterministic across OSes (recorded on Windows, replayed on Linux), and any changed prompt, skill or tool output fails the build. Trace stats go to the job summary, and traces are uploaded as artifacts. → [ADR-0030](docs/DECISIONS.md#adr-0030-cassettes-are-the-response-cache-replayed-read-only)
-  - Planned: an LLM regression gate that posts paired-bootstrap metric deltas on PRs, and an approval-gated, audited one-time test-set evaluation.
+  - **A regression gate for an LLM system** (`eval.yml`):
+    - the real API on a fixed subset, approval-gated, capped at $1 and at one run a week;
+    - paired-bootstrap deltas, failure-category deltas and a coverage rule;
+    - a committed baseline, and an eval pack that cannot contain test rows.
+  - Planned: an approval-gated, audited one-time test-set evaluation.
 - **Verify, don't remember.** Before any code, every external API was checked against current docs, and several contradicted older assumptions. → [M0 learning note](docs/learning/M0-foundations.md)
 
 ## Roadmap
@@ -237,7 +294,7 @@ The process was the one designed for a human:
 - [x] **M3 MCP server + retrieval:** `repo-intel` server, hybrid BM25 + dense retrieval, `as_of` guard
 - [x] **M4 Harness + skills:** our own agent loop, progressive skill disclosure, tracing
 - [x] **M5 Gold labels, judge, failure taxonomy** (labels by a model annotator, ADR-0035)
-- [ ] **M6 Iteration loop + LLM regression gate in CI**
+- [x] **M6 Iteration loop + LLM regression gate in CI:** iterations 6–8, ablations E2–E5, `eval.yml`
 - [ ] **M7 Decision layer:** Jev, LLM and classifier backends, calibration, cascade
 - [ ] **M8 Transfer repo + one-time test-set evaluation**
 - [ ] **M9 Report, results site, demo**

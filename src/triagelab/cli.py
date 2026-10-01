@@ -1020,3 +1020,22 @@ def deltas(
     out.write_bytes(f"# {spec.title} ({labels} labels)\n\n{table}".encode())
     typer.echo(table)
     typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def calibration(
+    spec_path: Annotated[Path, typer.Argument(help="A calibration spec (title, sources).")],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+    figures_dir: Annotated[Path, typer.Option("--figures-dir")] = Path("reports/figures"),
+) -> None:
+    """Calibration of each source's confidences: tables, slices, reliability and
+    risk-coverage figures. Writes <spec>-<labels>.md next to the spec."""
+    from triagelab.eval.calibration_report import CalibrationSpec, build_report
+
+    spec = CalibrationSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(DEFAULT_CONFIG)
+    text = build_report(spec, cfg.paths.runs_dir, _labels(labels), figures_dir, spec_path.stem)
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(text.encode())
+    typer.echo(text)
+    typer.echo(f"written to {out.as_posix()}")

@@ -80,8 +80,8 @@ def test_curve_points(tau: float, escalated: float, accuracy: float, cost: float
 def test_tau_is_the_cheapest_that_matches_the_full_agent() -> None:
     c = cascade()
     assert c.thresholds() == [0.0, 0.3, 0.7, 0.8, 0.9, 1.01]
-    assert c.choose_tau(EXAMPLES) == 0.8
-    assert c.choose_tau(EXAMPLES, tolerance=0.3) == 0.7  # 0.75 is within 0.3 of 1.0
+    assert c.choose_tau(REFS) == 0.8
+    assert c.choose_tau(REFS, tolerance=0.3) == 0.7  # 0.75 is within 0.3 of 1.0
 
 
 def test_cross_fitting_routes_each_issue_by_the_other_folds_tau() -> None:
@@ -99,3 +99,22 @@ def test_cross_fitting_routes_each_issue_by_the_other_folds_tau() -> None:
 def test_unknown_metrics_are_refused() -> None:
     with pytest.raises(ValueError, match="unknown metrics"):
         Cascade(EXAMPLES, CHEAP, FULL, {}, {}, ["t9_vibes"])
+
+
+def test_decision_level_cascade() -> None:
+    from triagelab.decisions.cascade import DecisionCascade, DecisionPair
+
+    pairs = {
+        "o/r#1": DecisionPair(True, 0.9, False, 0.0001, 0.01),  # the backend knows better
+        "o/r#2": DecisionPair(False, 0.4, True, 0.0001, 0.01),  # unsure and wrong: escalate
+        "o/r#3": DecisionPair(True, 0.6, True, 0.0001, 0.01),
+    }
+    c = DecisionCascade(pairs)
+    keep_all, middle, agent = c.point(0.0), c.point(0.5), c.point(1.01)
+    assert (keep_all.metrics["accuracy"], keep_all.escalated) == (pytest.approx(2 / 3), 0.0)
+    assert keep_all.cost_per_1000 == pytest.approx(0.1)
+    assert (middle.metrics["accuracy"], middle.escalated) == (1.0, pytest.approx(1 / 3))
+    assert middle.cost_per_1000 == pytest.approx((0.0003 + 0.01) / 3 * 1000)
+    assert agent.metrics["accuracy"] == pytest.approx(2 / 3)  # the agent alone misses #1
+    # The backend alone already matches the agent: the chosen τ escalates nothing.
+    assert c.point(c.choose_tau(c.refs())).escalated == 0.0

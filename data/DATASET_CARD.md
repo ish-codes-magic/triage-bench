@@ -98,6 +98,26 @@ The agent input is exactly: `issue_ref`, `repo`, `number`, `title`, `body`, `aut
 ## Provenance, licensing and privacy
 
 - **Content:** public GitHub content, © its authors, used for research evaluation under GitHub's Terms of Service.
-- **Not redistributed:** raw data lives in the gitignored `data/` directory; only this card and the aggregate report are committed.
+- **Redistribution:** raw data lives in the gitignored `data/` directory. Two kinds of derived pack are published as GitHub release assets, so that CI can run evaluations (ADR-0040, ADR-0046):
+  - the **eval pack** (`evalpack-v1`): creation-time snapshots, silver labels and the retrieval history for the train and dev periods only. It holds nothing from the test period.
+  - the **test packs**: everything, published only once a test session is frozen.
+
+  Issue texts remain © their authors.
 - **Logins:** public GitHub usernames are stored, because label provenance needs them. No private data is collected.
 - **Reproducible:** `triagelab data collect` then `triagelab data build`. Results can drift slightly as GitHub content changes. The dataset hash recorded with every run identifies the exact build.
+
+## Transfer dataset: astral-sh/uv (E8)
+
+Built with the same pipeline and the same time windows, from `configs/repos/astral-sh__uv.yaml`. Aggregate report: `reports/data/astral-sh__uv.md`. 2,826 issues were collected (2,543 train, 100 dev, 50 test), plus 6,064 retrieval-only issues back to February 2024.
+
+- **How the profile was written:** from the repository's label list and its directory layout at the freeze commit (`c22efa1`, 2026-05-18). No issue from the evaluation window was read.
+- **The dev split is never evaluated or tuned on.** Transfer means swapping the profile and the skill only.
+- **Label provenance is the main caveat (ADR-0045):**
+  - uv's issue forms attach `bug`, `enhancement` or `question` at creation. On eval-window issues, 188 of 261 taxonomy labels were applied by the author and 72 by a maintainer.
+  - A maintainer triaged 26–32% of issues (CPython: 70%).
+  - Silver type labels therefore partly measure "which form did the author choose". Maintainers do correct them: on train, 277 form-filed issues were relabelled `question`.
+  - Headline transfer results use the adjudicated test labels. Type labels are also reported on the maintainer-triaged subset.
+- **Area labels (`area:*`) are sparse.** Only four have 10 or more training examples and enter the vocabulary: `area:error-messages`, `area:windows`, `area:build-backend`, `area:configuration`.
+- **Duplicates:** GitHub's structured duplicate closures (85 in the collected window).
+- **Components:** 11 groups of crates. About 20% of issues have a linked fixing PR; 33 fixes that spanned groups equally were skipped as ties.
+- **Needs-info:** the `needs-mre` label ("Needs more information for reproduction"), on about 5% of issues. Unlike CPython's `pending`, it means what its name says, so uv gives a valid T4.

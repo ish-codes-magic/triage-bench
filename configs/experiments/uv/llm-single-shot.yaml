@@ -1,0 +1,4 @@
+# E8 baseline: the single-shot LLM (thinking, confidence floor) on astral-sh/uv.
+extends: ../e1-llm-single-shot-thinking-floor.yaml
+name: uv-llm-single-shot
+dataset: {profile: configs/repos/astral-sh__uv.yaml}

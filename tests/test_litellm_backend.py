@@ -147,3 +147,25 @@ def test_tool_turns_are_sent_in_the_openai_message_format() -> None:
         "content": "{}",
         "tool_call_id": "call_1",
     }
+
+
+def test_top_logprobs_are_requested_and_parsed() -> None:
+    from types import SimpleNamespace
+
+    from triagelab.litellm_backend import (
+        _first_token_logprobs,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    request = LLMRequest(model="m", messages=(Message(role="user", content="x"),), max_tokens=1)
+    assert "logprobs" not in build_params(request, timeout_s=5)
+    assert "top_logprobs" not in request.model_dump()  # old cache keys are unchanged
+    asked = request.model_copy(update={"top_logprobs": 5})
+    params = build_params(asked, timeout_s=5)
+    assert (params["logprobs"], params["top_logprobs"]) == (True, 5)
+    assert asked.cache_key() != request.cache_key()
+
+    top = [SimpleNamespace(token="B", logprob=-0.1), SimpleNamespace(token="A", logprob=-2.7)]
+    choice = SimpleNamespace(logprobs=SimpleNamespace(content=[SimpleNamespace(top_logprobs=top)]))
+    parsed = _first_token_logprobs(choice)
+    assert [(t.token, t.logprob) for t in parsed] == [("B", -0.1), ("A", -2.7)]
+    assert _first_token_logprobs(SimpleNamespace(logprobs=None)) == ()

@@ -57,3 +57,12 @@ Two seed categories never occurred and were dropped: "wrong component map" and "
 - **Most errors are label-taxonomy judgement, not retrieval.** Over-labeling, location confusion and type errors make up 69 of the 124 reference tags. Retrieval errors (9) are comparatively rare.
 - **The rules that would prevent them are in the skill,** which this 9B model neither loads unprompted nor follows when made to (iteration 4).
 - **The LLM tagger reproduces the frequent, observable categories reliably** (κ 0.62–0.88). It can't judge the ones that need outside knowledge: whether the skill states the broken rule, or whether the gold is debatable. Treat those counts as unvalidated.
+
+## v1 in use (M6)
+
+- **Every M6 run is tagged** (`triagelab failures tag <run> --labels gold`). The counts appear in each delta report ([iterations](../reports/experiments/m6-iterations-gold.md), [ablations](../reports/experiments/m6-ablations-gold.md)) and in the gate's PR comment.
+- **The tagger's noise floor, measured.** Iteration 8 changed only post-processing, so its traces are byte-identical to iteration 6's. Even so, the tagger's counts in untouched categories moved by up to ±4. Treat category deltas of that size as noise.
+- **The targeted categories moved as intended:**
+  - code-location confusion 31 → 23 (iteration 6);
+  - topic/OS over-labeling 42 → 8 (iteration 8).
+- **Two unvalidated categories misbehave on tool-free runs.** On E3, which has no search tools, "search process failure" rises to 31 and "correct evidence ignored" falls to 0. With no searches there's no search process and no retrieved evidence, so the counts describe the setup, not the agent. Both were already marked unvalidated (κ < 0.6).

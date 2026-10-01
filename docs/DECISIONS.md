@@ -963,3 +963,39 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - Silver T1 on uv partly measures "which form did the author pick". It's a lower bound on label quality, not a triage ground truth.
 - uv gives the project its first valid T4 evaluation.
+
+## ADR-0046: The test split is evaluated through frozen sessions, in CI, from a test pack
+
+**Context.**
+- §7.4: the test split is evaluated at most twice in the whole project. §12.8: a manual, approval-protected workflow records each run and refuses a third.
+- The M2 guard counted *runs* (limit 2), but the final evaluation covers several configs.
+- A counter also freezes nothing: prompts and post-processing live in code, so a config fingerprint alone lets a prompt change through.
+- The owner chose to run the evaluation in CI and to publish a test pack for it (2026-10-01).
+
+**Decision.**
+- **Session** (`eval/test_session.py`): a file committed before any test issue is scored (`reports/test-eval/<slug>/session-N.yaml`). It holds:
+  - each config's path, name and fingerprint (extended over a routed system's parts);
+  - a hash of `src/triagelab`, `skills` and `configs`, with line endings normalised so Windows and Linux agree;
+  - the dataset hash.
+- **A test run is refused** unless:
+  - its config is in the session;
+  - the config, the code and the dataset are unchanged since the freeze;
+  - the run covers the whole split;
+  - that config has no completed run in the session;
+  - the repository has at most two sessions.
+
+  Every start and completion is appended to an audit log, which is committed with the results.
+- **Test pack:** `gate pack --with-test` builds a pack with every split and the full retrieval history. It's published only when a session is frozen. Only `test-eval.yml` unpacks it (`--allow-test`); the regression gate's unpack still refuses it.
+- **Workflow (`test-eval.yml`):**
+  - manual dispatch only, in the approval-protected `eval` environment;
+  - refuses a session that already succeeded in this workflow;
+  - runs `triagelab test-session run`;
+  - uploads the runs and the audit log for 90 days.
+
+  Gold scoring happens afterwards, offline, from the stored predictions.
+- **Frozen for session 1** (owner, 2026-10-01): the routed system (headline), the full agent, the stuffed agent, the TF-IDF classifier and the single-shot LLM.
+
+**Consequences.**
+- "Evaluated once" is enforced by code and by the workflow, not by convention, and the freeze covers prompts as well as configs.
+- After publication the test issues and their silver labels are public. That's acceptable only because every decision is frozen first.
+- A session pins the exact code: the evaluation has to run before any further change to `src`, `skills` or `configs`.

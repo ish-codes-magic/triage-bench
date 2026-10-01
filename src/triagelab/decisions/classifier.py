@@ -28,9 +28,11 @@ class Head:
     """One question's classifier: its classes and a fitted model."""
 
     classes: tuple[str, ...]
-    model: Any  # sklearn LogisticRegression
+    model: Any  # sklearn LogisticRegression; None when training saw a single class
 
     def probabilities(self, vectors: Matrix) -> list[dict[str, float]]:
+        if self.model is None:
+            return [{self.classes[0]: 1.0} for _ in range(len(vectors))]
         rows: Any = self.model.predict_proba(vectors)
         return [
             {c: float(p) for c, p in zip(self.classes, row, strict=True)}
@@ -39,8 +41,12 @@ class Head:
 
 
 def fit_head(vectors: Matrix, answers: Sequence[str], *, c: float = 1.0) -> Head:
-    if len(set(answers)) < 2:
-        raise DecisionError("a head needs at least two distinct answers to learn from")
+    """Logistic regression, or a constant answer when training saw only one class."""
+    distinct = sorted(set(answers))
+    if not distinct:
+        raise DecisionError("a head needs training examples")
+    if len(distinct) == 1:
+        return Head(classes=(distinct[0],), model=None)
     model: Any = LogisticRegression(C=c, max_iter=2000)
     model.fit(vectors, list(answers))
     return Head(classes=tuple(str(k) for k in model.classes_), model=model)

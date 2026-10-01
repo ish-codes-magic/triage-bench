@@ -69,9 +69,11 @@ def test_unknown_questions_and_numbers_are_refused() -> None:
         backend.score("x", QUESTION, 0, 1)
 
 
-def test_a_head_needs_two_classes() -> None:
+def test_a_single_class_head_is_a_constant_answer() -> None:
+    head = fit_head(np.ones((3, 2), dtype=np.float32), ["a", "a", "a"])
+    assert head.probabilities(np.zeros((2, 2), dtype=np.float32)) == [{"a": 1.0}, {"a": 1.0}]
     with pytest.raises(DecisionError):
-        fit_head(np.ones((3, 2), dtype=np.float32), ["a", "a", "a"])
+        fit_head(np.ones((0, 2), dtype=np.float32), [])
 
 
 def test_cached_encoder_encodes_each_text_once_across_instances(tmp_path: Path) -> None:

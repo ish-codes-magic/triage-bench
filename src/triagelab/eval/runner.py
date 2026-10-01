@@ -115,6 +115,10 @@ def build_triager(
         return ClassifierTriager(
             train, load_history(data_dir, profile), min_label_count=cfg.system.min_label_count
         )
+    if cfg.system.decisions is not None:  # kind == "decisions"
+        from triagelab.decisions.factory import build_decision_triager
+
+        return build_decision_triager(cfg, cfg.system.decisions, profile, train, client)
     if cfg.system.agent is not None:  # kind == "agent" (the config validator pairs them)
         from triagelab.harness.factory import build_agent  # MCP/OTel imports only when needed
 

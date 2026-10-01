@@ -979,17 +979,22 @@ def gate_pack(
 @gate_app.command("unpack")
 def gate_unpack(
     archive: Annotated[Path, typer.Argument(help="An eval pack (.tar.gz).")],
+    profile_path: ProfileOpt,
     data_dir: DataDirOpt = Path("data"),
 ) -> None:
-    """Unpack and verify an eval pack; refuses a pack with test-split rows."""
+    """Unpack and verify an eval pack; refuses anything from the test period."""
     from triagelab.data.evalpack import PackError, extract_pack
+    from triagelab.data.profile import load_profile
 
     try:
-        manifest = extract_pack(archive, data_dir)
+        manifest = extract_pack(archive, data_dir, load_profile(profile_path))
     except PackError as err:
         typer.echo(f"eval pack rejected: {err}", err=True)
         raise typer.Exit(code=1) from err
-    typer.echo(f"{len(manifest.files)} files verified, splits {manifest.splits}")
+    typer.echo(
+        f"{len(manifest.files)} files verified, splits {manifest.splits}, "
+        f"history before {manifest.history_cutoff}"
+    )
 
 
 @app.command()

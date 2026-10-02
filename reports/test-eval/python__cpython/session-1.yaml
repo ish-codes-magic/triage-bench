@@ -1,8 +1,8 @@
 version: 1
 repo: python/cpython
 number: 1
-created_at: '2026-10-01T19:25:34.417379Z'
-code_hash: 6de34cd084adb53cca51ee73b94fc83f90035de612571d48566c77721fa00f79
+created_at: '2026-10-02T00:53:53.075564Z'
+code_hash: e9f1055f582b6ece0ff86b599469336c02894dcc6de9482facd18718db2830d1
 dataset_hash: 23ee2ef6f25bf3cdff548bd07b864b0857ba6344a84b0f8507f943ebecd68ac9
 configs:
 - path: configs/experiments/routed.yaml
@@ -22,4 +22,6 @@ configs:
   fingerprint: 27a296bf01ad
 note: 'M8 one-time evaluation of the final configs (owner, 2026-10-01): the routed
   system is the headline; the full agent, the stuffed agent and two baselines are
-  its references.'
+  its references. Re-frozen on 2026-10-02 before any test issue was scored: the first
+  freeze (commit 682f46a) was refused in CI because the code hash depended on the
+  platform''s file order (ADR-0046).'

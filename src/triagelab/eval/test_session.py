@@ -67,7 +67,11 @@ def code_hash(root: Path) -> str:
     """One hash over every file the runs depend on (paths and contents, sorted)."""
     digest = hashlib.sha256()
     for tree in FROZEN_TREES:
-        for f in sorted(p for p in (root / tree).rglob("*") if p.is_file()):
+        files = (p for p in (root / tree).rglob("*") if p.is_file())
+        # Sorted by path parts as plain strings. Path objects compare case-insensitively
+        # on Windows, so SKILL.md sorted after references/ there and before it on Linux:
+        # a session frozen on one could never run on the other.
+        for f in sorted(files, key=lambda p: p.relative_to(root).parts):
             if "__pycache__" in f.parts:
                 continue
             content = f.read_bytes().replace(b"\r\n", b"\n")

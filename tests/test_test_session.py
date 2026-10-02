@@ -1,5 +1,6 @@
 """Test sessions: what gets frozen, and every way a test run is refused."""
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,10 @@ from triagelab.eval.test_session import (
 from .test_runner import PROFILE_PATH, _config, _run, workspace  # noqa: F401
 
 SLUG = load_profile(PROFILE_PATH).slug
+REPO = Path(__file__).resolve().parents[1]
+COMMITTED_SESSIONS = sorted(
+    p.relative_to(REPO).as_posix() for p in REPO.glob("reports/test-eval/*/session-*.yaml")
+)
 
 
 def on_disk(ws: Path, cfg: Config) -> Path:
@@ -119,6 +124,50 @@ def test_code_hash_ignores_line_endings_and_sees_edits(tmp_path: Path) -> None:
     assert code_hash(tmp_path) == unix  # a Windows checkout hashes like a Linux one
     f.write_bytes(b"x = 1\ny = 3\n")
     assert code_hash(tmp_path) != unix
+
+
+def test_code_hash_orders_files_the_same_on_every_platform(tmp_path: Path) -> None:
+    """Path objects compare case-insensitively on Windows; the hash must not follow them."""
+    files = {
+        "skills/s/SKILL.md": b"skill\n",
+        "skills/s/_notes.md": b"notes\n",
+        "skills/s/references/map.md": b"map\n",
+        "skills/s-2/SKILL.md": b"other\n",
+    }
+    for rel, content in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(content)
+    # By path parts, as plain strings: "s" before "s-2"; then "S" < "_" < "r".
+    order = [
+        "skills/s/SKILL.md",
+        "skills/s/_notes.md",
+        "skills/s/references/map.md",
+        "skills/s-2/SKILL.md",
+    ]
+    expected = hashlib.sha256()
+    for rel in order:
+        expected.update(rel.encode() + b"\0")
+        expected.update(hashlib.sha256(files[rel]).digest())
+    assert code_hash(tmp_path) == expected.hexdigest()
+
+
+@pytest.mark.parametrize("session_file", COMMITTED_SESSIONS)
+def test_a_session_waiting_to_run_matches_this_checkout(
+    session_file: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frozen session must be runnable from this checkout until it has run.
+
+    It is frozen on one machine and evaluated on another (CI), so this runs on both
+    platforms. Once a session has completed runs, the code is free to change again.
+    """
+    path = REPO / session_file
+    session = load_session(path)
+    if any(e["event"] == "completed" for e in audit(path) if e["session"] == str(session.number)):
+        pytest.skip("already evaluated")
+    monkeypatch.chdir(REPO)  # a routed config names its parts relative to the repository
+    assert code_hash(REPO) == session.code_hash
+    for item in session.configs:
+        assert deep_fingerprint(load_config(REPO / item.path)) == item.fingerprint, item.name
 
 
 def test_a_routed_fingerprint_covers_its_parts(workspace: Path) -> None:  # noqa: F811

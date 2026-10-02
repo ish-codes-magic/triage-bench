@@ -1,0 +1,15 @@
+# The issue-level cascade, live (E7, M9): the stuffed agent triages every issue, and the
+# issues it is unsure about go to the full agent.
+#   gate  its own confidence: min(type-label confidence, component confidence)
+#   tau   0.70, chosen on dev (reports/cascade/e7-gold.md: 4% of dev issues escalate,
+#         $1.38 per 1,000 issues against the full agent's $6.84)
+# The offline report recombines stored runs to choose tau; this config applies it.
+extends: ../base.yaml
+name: cascade
+eval: {concurrency: 8}
+system:
+  kind: cascade
+  cascade:
+    cheap: configs/experiments/e3-stuffed.yaml
+    full: configs/experiments/agent.yaml
+    tau: 0.70

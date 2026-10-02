@@ -26,7 +26,7 @@ from triagelab import wiring
 from triagelab.baselines.classifier import ClassifierTriager
 from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
 from triagelab.baselines.majority import MajorityTriager
-from triagelab.config import Config, RoutedConfig, read_subset
+from triagelab.config import CascadeConfig, Config, RoutedConfig, read_subset
 from triagelab.cost import BudgetExceededError
 from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile, load_profile
@@ -83,6 +83,10 @@ def build_triager(
         return _build_routed(
             cfg, cfg.system.routed, profile, client, run_id=run_id, run_dir=run_dir, stack=stack
         )
+    if cfg.system.cascade is not None:  # kind == "cascade"
+        return _build_cascade(
+            cfg, cfg.system.cascade, profile, client, run_id=run_id, run_dir=run_dir, stack=stack
+        )
     if cfg.system.agent is not None:  # kind == "agent" (the config validator pairs them)
         from triagelab.harness.factory import build_agent  # MCP/OTel imports only when needed
 
@@ -108,6 +112,51 @@ def build_triager(
     )
 
 
+def _part(cfg: Config, path: Path) -> Config:
+    """A composed system's part: its own model and system, in the composing run's
+    environment (where the data, cache, budget and traces live is the run's decision)."""
+    from triagelab.config import load_config
+
+    return load_config(path).model_copy(
+        update={
+            "dataset": cfg.dataset,
+            "paths": cfg.paths,
+            "cache": cfg.cache,
+            "budget": cfg.budget,
+            "tracing": cfg.tracing,
+        }
+    )
+
+
+def _build_cascade(
+    cfg: Config,
+    cascade: CascadeConfig,
+    profile: RepoProfile,
+    client: Callable[[Config], LLMClient],
+    *,
+    run_id: str,
+    run_dir: Path,
+    stack: ExitStack,
+) -> Triager:
+    from triagelab.decisions.live_cascade import CascadeTriager, routing_log
+
+    def tier(name: str, path: Path) -> Triager:
+        # Each tier keeps its own traces and server log, so either can be read alone.
+        tier_dir = run_dir / name
+        tier_dir.mkdir(exist_ok=True)
+        return build_triager(
+            _part(cfg, path), profile, client, run_id=run_id, run_dir=tier_dir, stack=stack
+        )
+
+    return CascadeTriager(
+        tier("cheap", cascade.cheap),
+        tier("full", cascade.full),
+        profile.taxonomy.type,
+        cascade.tau,
+        on_routing=routing_log(run_dir),
+    )
+
+
 def _build_routed(
     cfg: Config,
     routed: RoutedConfig,
@@ -119,23 +168,11 @@ def _build_routed(
     stack: ExitStack,
 ) -> Triager:
     """Build every part from its own experiment config, in this run's environment."""
-    from triagelab.config import load_config
     from triagelab.decisions.questions import QuestionId
     from triagelab.decisions.routed import RoutedTriager
 
     def part(path: Path) -> Config:
-        # The part contributes its model and system; where the data, cache and budget
-        # live is the routed run's decision.
-        sub = load_config(path)
-        return sub.model_copy(
-            update={
-                "dataset": cfg.dataset,
-                "paths": cfg.paths,
-                "cache": cfg.cache,
-                "budget": cfg.budget,
-                "tracing": cfg.tracing,
-            }
-        )
+        return _part(cfg, path)
 
     def build(sub: Config) -> Triager:
         return build_triager(sub, profile, client, run_id=run_id, run_dir=run_dir, stack=stack)

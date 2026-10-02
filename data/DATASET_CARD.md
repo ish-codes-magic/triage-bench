@@ -121,3 +121,22 @@ Built with the same pipeline and the same time windows, from `configs/repos/astr
 - **Duplicates:** GitHub's structured duplicate closures (85 in the collected window).
 - **Components:** 11 groups of crates. About 20% of issues have a linked fixing PR; 33 fixes that spanned groups equally were skipped as ties.
 - **Needs-info:** the `needs-mre` label ("Needs more information for reproduction"), on about 5% of issues. Unlike CPython's `pending`, it means what its name says, so uv gives a valid T4.
+
+## Test-split labels (M8)
+
+The 50 test issues of each repository were adjudicated by the same model annotator and process as dev (blind pass from the issue text, then a final pass with the evidence), **after** the test session was frozen and before any system was scored on them. Files: `data/gold/python__cpython.jsonl` and `data/gold/astral-sh__uv.jsonl`; agreement reports: `reports/gold/test.md` and `reports/gold/uv/test.md`.
+
+| | python/cpython | astral-sh/uv |
+|---|---|---|
+| usable issues | 50 | 50 |
+| final answer differs from the blind one | 6 | 11 |
+| type labels | bug 32, feature 10, crash 8 | bug 26, enhancement 16, question 8 |
+| duplicates | 6 | 3 |
+| needs info | 0 | 6 |
+| no component | 2 | 9 |
+| silver vs. gold, type label: Cohen's κ (n) | 0.79 (30) | 0.66 (16) |
+
+- **The CPython test sample is easier than dev on the type label.** It has no refactor or security issues (dev: 7 of 97), and blind and final type labels agree on 49 of 50. Dev numbers and test numbers for the type label are not directly comparable.
+- **On uv, what maintainers label is not a random sample.** Of the 16 test issues a maintainer triaged, 6 carry `question`; the 34 others mostly keep the reporter's own `bug`. Scores against silver and against gold therefore answer different questions (`reports/test-eval/RESULTS.md`, section 4).
+- **Too few positives to interpret:** duplicates (6 and 3) and needs-info (0 and 6).
+- **Redistribution:** the test packs (`testpack-python__cpython-v1`, `testpack-astral-sh__uv-v1`) contain the full dataset including the test period. They were published only after the freeze, to let the approval-protected workflow run (ADR-0046).

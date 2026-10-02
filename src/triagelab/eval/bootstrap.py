@@ -117,12 +117,13 @@ def zero_failure_bound(n: int, confidence: float = 0.95) -> float:
 
         (1 - p) ** n = 1 - confidence
 
-    Solve for p. For 95% confidence it is close to 3 / n, the "rule of three".
-
-    # YOUR TURN
-    Hints:
-      - n = 0 tells you nothing: return 1.0.
-      - n < 0, or a confidence outside (0, 1), is a caller's bug: raise ValueError.
-      - The answer for n = 50 at 95% is about 0.058, so accuracy is "above 0.94".
+    For 95% confidence it is close to 3 / n, the "rule of three". For n = 50 it is
+    0.058, so the honest claim is "accuracy above 0.94", not 1.00.
     """
-    raise NotImplementedError("YOUR TURN: see the docstring")
+    if n < 0:
+        raise ValueError(f"n must be >= 0, got {n}")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+    if n == 0:
+        return 1.0  # no trials: every failure rate is still possible
+    return 1.0 - (1.0 - confidence) ** (1.0 / n)

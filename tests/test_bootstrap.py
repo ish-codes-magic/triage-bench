@@ -69,7 +69,6 @@ def test_paired_bootstrap_detects_a_consistent_improvement() -> None:
     assert d.share_b_better == 1.0
 
 
-@pytest.mark.your_turn
 def test_zero_failure_bound_matches_the_closed_form() -> None:
     # (1 - p) ** n = 0.05, by hand: n = 1 -> 0.95; n = 50 -> 1 - 0.05 ** 0.02 = 0.05816
     assert zero_failure_bound(1) == pytest.approx(0.95)
@@ -77,13 +76,11 @@ def test_zero_failure_bound_matches_the_closed_form() -> None:
     assert zero_failure_bound(50, confidence=0.99) == pytest.approx(0.08799, abs=1e-5)
 
 
-@pytest.mark.your_turn
 def test_zero_failure_bound_is_close_to_the_rule_of_three() -> None:
     for n in (30, 100, 1000):
         assert zero_failure_bound(n) == pytest.approx(3 / n, rel=0.06)
 
 
-@pytest.mark.your_turn
 def test_zero_failure_bound_edge_cases() -> None:
     assert zero_failure_bound(0) == 1.0  # no trials: anything is possible
     with pytest.raises(ValueError, match="n"):

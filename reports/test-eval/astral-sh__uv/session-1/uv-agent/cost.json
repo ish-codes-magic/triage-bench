@@ -1,0 +1,10 @@
+{
+  "calls": 498,
+  "cache_hits": 0,
+  "retries": 0,
+  "tokens_in": 4910276,
+  "tokens_out": 110750,
+  "reasoning_tokens": 80163,
+  "cost_usd": 0.5076401000000001,
+  "saved_by_cache_usd": 0.0
+}

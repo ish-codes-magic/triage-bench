@@ -1,0 +1,20 @@
+{
+  "run_id": "20261002-063047-uv-agent-63270f",
+  "name": "uv-agent",
+  "created_at": "2026-10-02T06:30:47.373076Z",
+  "command": "test-session run reports/test-eval/astral-sh__uv/session-1.yaml",
+  "git_sha": "425937b6356bed5a88de59f9654735cc6f929467",
+  "config_fingerprint": "63270fe210ba",
+  "triagelab_version": "0.1.0",
+  "python_version": "3.12.3",
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "details": {
+    "split": "test",
+    "system": "agent",
+    "model": "openrouter/qwen/qwen3.5-9b",
+    "skills": "triage-uv",
+    "dataset_hash": "3ba60bc3186f10a6d8c97001dbdd7bf67608a6c3b34820af8f7edc240bcd9e9d",
+    "issues": "50",
+    "subset": "-"
+  }
+}

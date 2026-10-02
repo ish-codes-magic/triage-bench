@@ -1,0 +1,104 @@
+{
+  "split": "test",
+  "config": "uv-agent",
+  "metrics": {
+    "t1_micro_f1": {
+      "point": 0.3888888888888889,
+      "low": 0.12893145161290334,
+      "high": 0.6285978835978837,
+      "weighted": 0.36004623386630713
+    },
+    "t1_macro_f1": {
+      "point": 0.4895833333333333,
+      "low": 0.18732638888888906,
+      "high": 0.6118114973262032,
+      "weighted": 0.44992501010511887
+    },
+    "t1_type_micro_f1": {
+      "point": 0.28571428571428575,
+      "low": 0.06896551724137931,
+      "high": 0.5556666666666666,
+      "weighted": 0.22126966436623943
+    },
+    "t1_area_micro_f1": {
+      "point": 1.0,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 1.0
+    },
+    "t2_link_f1": {
+      "point": 0.28571428571428575,
+      "low": 0.0,
+      "high": 0.8,
+      "weighted": 0.21445466491458604
+    },
+    "t2_link_precision": {
+      "point": 0.25,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 0.15807826423866717
+    },
+    "t2_link_recall": {
+      "point": 0.3333333333333333,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 0.3333333333333333
+    },
+    "t2_detect_f1": {
+      "point": 0.5714285714285715,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 0.42890932982917207
+    },
+    "t3_accuracy": {
+      "point": 0.5882352941176471,
+      "low": 0.3333333333333333,
+      "high": 0.8181818181818182,
+      "weighted": 0.5882352941176471
+    },
+    "t3_top3_accuracy": {
+      "point": 0.8823529411764706,
+      "low": 0.7142857142857143,
+      "high": 1.0,
+      "weighted": 0.8823529411764707
+    },
+    "t4_f1": {
+      "point": 0.4615384615384615,
+      "low": 0.0,
+      "high": 0.75,
+      "weighted": 0.2748091603053435
+    },
+    "t4_precision": {
+      "point": 0.42857142857142855,
+      "low": 0.0,
+      "high": 0.8333333333333334,
+      "weighted": 0.18947368421052632
+    },
+    "t4_recall": {
+      "point": 0.5,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 0.5
+    }
+  },
+  "system": {
+    "issues": 50,
+    "errors": 0,
+    "cost_usd_total": 0.5076401,
+    "cost_usd_per_issue": 0.010152802,
+    "latency_ms_p50": 147555.0,
+    "latency_ms_p95": 495416.3,
+    "tokens_in_per_issue": 98205.52,
+    "tokens_out_per_issue": 2215.0
+  },
+  "per_label_f1": {
+    "area:error-messages": 1.0,
+    "area:registry": 0.0,
+    "area:uv-check": 0.0,
+    "area:windows": 1.0,
+    "bug": 0.26666666666666666,
+    "enhancement": 0.4,
+    "performance": 1.0,
+    "question": 0.25
+  }
+}

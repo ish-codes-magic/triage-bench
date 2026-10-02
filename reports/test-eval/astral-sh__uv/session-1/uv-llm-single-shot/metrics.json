@@ -1,0 +1,106 @@
+{
+  "split": "test",
+  "config": "uv-llm-single-shot",
+  "metrics": {
+    "t1_micro_f1": {
+      "point": 0.2926829268292683,
+      "low": 0.09993902439024396,
+      "high": 0.5,
+      "weighted": 0.28972665719301177
+    },
+    "t1_macro_f1": {
+      "point": 0.375,
+      "low": 0.12488425925925936,
+      "high": 0.4603454715219421,
+      "weighted": 0.3507486365930693
+    },
+    "t1_type_micro_f1": {
+      "point": 0.22222222222222224,
+      "low": 0.0,
+      "high": 0.45714285714285713,
+      "weighted": 0.18960778325552988
+    },
+    "t1_area_micro_f1": {
+      "point": 1.0,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 1.0
+    },
+    "t2_link_f1": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t2_link_precision": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t2_link_recall": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t2_detect_f1": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t3_accuracy": {
+      "point": 0.7058823529411765,
+      "low": 0.47058823529411764,
+      "high": 0.9131340579710143,
+      "weighted": 0.7058823529411765
+    },
+    "t3_top3_accuracy": {
+      "point": 1.0,
+      "low": 1.0,
+      "high": 1.0,
+      "weighted": 1.0
+    },
+    "t4_f1": {
+      "point": 0.3529411764705882,
+      "low": 0.0,
+      "high": 0.625,
+      "weighted": 0.2113077255071213
+    },
+    "t4_precision": {
+      "point": 0.2727272727272727,
+      "low": 0.0,
+      "high": 0.5555555555555556,
+      "weighted": 0.1339608186494473
+    },
+    "t4_recall": {
+      "point": 0.5,
+      "low": 0.0,
+      "high": 1.0,
+      "weighted": 0.5
+    }
+  },
+  "system": {
+    "issues": 50,
+    "errors": 0,
+    "cost_usd_total": 0.01196975,
+    "cost_usd_per_issue": 0.000239395,
+    "latency_ms_p50": 61500.0,
+    "latency_ms_p95": 93353.99999999996,
+    "tokens_in_per_issue": 1184.92,
+    "tokens_out_per_issue": 806.02
+  },
+  "per_label_f1": {
+    "area:error-messages": 1.0,
+    "area:registry": 0.0,
+    "area:uv-check": 0.0,
+    "area:windows": 1.0,
+    "bug": 0.25,
+    "compatibility": 0.0,
+    "enhancement": 0.5,
+    "performance": 1.0,
+    "question": 0.0,
+    "security": 0.0
+  }
+}

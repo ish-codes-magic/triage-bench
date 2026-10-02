@@ -1,0 +1,10 @@
+{"session": "1", "config": "uv-routed", "run_id": "20261002-055359-uv-routed-960e05", "event": "started", "at": "2026-10-02T05:53:59.289071+00:00"}
+{"session": "1", "config": "uv-routed", "run_id": "20261002-055359-uv-routed-960e05", "event": "completed", "at": "2026-10-02T06:30:47.314524+00:00"}
+{"session": "1", "config": "uv-agent", "run_id": "20261002-063047-uv-agent-63270f", "event": "started", "at": "2026-10-02T06:30:47.379704+00:00"}
+{"session": "1", "config": "uv-agent", "run_id": "20261002-063047-uv-agent-63270f", "event": "completed", "at": "2026-10-02T06:54:02.930041+00:00"}
+{"session": "1", "config": "uv-stuffed", "run_id": "20261002-065402-uv-stuffed-cd92c1", "event": "started", "at": "2026-10-02T06:54:02.991988+00:00"}
+{"session": "1", "config": "uv-stuffed", "run_id": "20261002-065402-uv-stuffed-cd92c1", "event": "completed", "at": "2026-10-02T06:54:15.713549+00:00"}
+{"session": "1", "config": "uv-classifier", "run_id": "20261002-065415-uv-classifier-d51e13", "event": "started", "at": "2026-10-02T06:54:15.773611+00:00"}
+{"session": "1", "config": "uv-classifier", "run_id": "20261002-065415-uv-classifier-d51e13", "event": "completed", "at": "2026-10-02T06:54:30.792080+00:00"}
+{"session": "1", "config": "uv-llm-single-shot", "run_id": "20261002-065430-uv-llm-single-shot-45059a", "event": "started", "at": "2026-10-02T06:54:30.861196+00:00"}
+{"session": "1", "config": "uv-llm-single-shot", "run_id": "20261002-065430-uv-llm-single-shot-45059a", "event": "completed", "at": "2026-10-02T07:08:34.658200+00:00"}

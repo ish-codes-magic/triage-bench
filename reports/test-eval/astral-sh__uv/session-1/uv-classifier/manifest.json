@@ -1,0 +1,20 @@
+{
+  "run_id": "20261002-065415-uv-classifier-d51e13",
+  "name": "uv-classifier",
+  "created_at": "2026-10-02T06:54:15.767734Z",
+  "command": "test-session run reports/test-eval/astral-sh__uv/session-1.yaml",
+  "git_sha": "425937b6356bed5a88de59f9654735cc6f929467",
+  "config_fingerprint": "d51e1330cad9",
+  "triagelab_version": "0.1.0",
+  "python_version": "3.12.3",
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "details": {
+    "split": "test",
+    "system": "classifier",
+    "model": "-",
+    "skills": "-",
+    "dataset_hash": "3ba60bc3186f10a6d8c97001dbdd7bf67608a6c3b34820af8f7edc240bcd9e9d",
+    "issues": "50",
+    "subset": "-"
+  }
+}

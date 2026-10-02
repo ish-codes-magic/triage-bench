@@ -270,6 +270,10 @@ def eval_cmd(
         typer.Option("--session", help="The frozen test session this run belongs to (test only)."),
     ] = None,
     resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
+    sample: Annotated[
+        int,
+        typer.Option(min=0, help="Repeat index for the consistency study: fresh model calls."),
+    ] = 0,
     otlp_endpoint: Annotated[
         str | None,
         typer.Option(
@@ -298,11 +302,13 @@ def eval_cmd(
             cfg,
             split=split_name,
             runs_dir=cfg.paths.runs_dir,
-            command=f"eval --config {config.as_posix()} --split {split}",
+            command=f"eval --config {config.as_posix()} --split {split}"
+            + (f" --sample {sample}" if sample else ""),
             log=typer.echo,
             limit=limit,
             session=session,
             resume_dir=resume,
+            sample=sample,
         )
     except TestSetLockedError as err:
         typer.echo(str(err), err=True)

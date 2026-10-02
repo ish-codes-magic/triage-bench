@@ -54,6 +54,8 @@ class ScoredRun(BaseModel):
     # Every model call came from the cache: answers and costs are the original run's, but
     # its latencies measure the replay, not the model.
     replayed: bool = False
+    # > 0 for a repeat made for the consistency study; results tables show first runs only.
+    sample: int = 0
 
 
 def _replayed(run_dir: Path) -> bool:
@@ -86,6 +88,7 @@ def load_scored_runs(runs_dir: Path) -> list[ScoredRun]:
                 metrics={k: MetricScore.model_validate(v) for k, v in metrics["metrics"].items()},
                 stats=SystemStats.model_validate(metrics["system"]),
                 replayed=_replayed(run_dir),
+                sample=int(manifest.details.get("sample", "0")),
             )
         )
     return runs
@@ -105,7 +108,7 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
     """
     latest: dict[str, ScoredRun] = {}
     for run in sorted(runs, key=lambda r: (r.stats.issues, r.created_at)):
-        if run.split == split:
+        if run.split == split and run.sample == 0:
             latest[run.name] = run
     rows = sorted(latest.values(), key=lambda r: r.name)
     header = (

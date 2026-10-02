@@ -33,7 +33,7 @@ from triagelab.data.profile import RepoProfile, load_profile
 from triagelab.data.splits import Split
 from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_parquet
 from triagelab.eval.dataset import EvalExample, family_vocabulary, load_history, load_split
-from triagelab.eval.registry import create_run, git_info, write_cost
+from triagelab.eval.registry import RunManifest, create_run, git_info, write_cost
 from triagelab.eval.score import Scorecard, score
 from triagelab.eval.test_session import TestSetLockedError, authorize, record
 from triagelab.llm_client import CallStats, CassetteMissError, LLMClient
@@ -209,11 +209,23 @@ def run_eval(
     session: Path | None = None,
     sessions_root: Path = Path(),
     resume_dir: Path | None = None,
+    sample: int = 0,
 ) -> RunOutcome:
     """`session`: the frozen test session this run belongs to; required for the test split
-    (eval/test_session.py). `sessions_root` is where session files live (the repository)."""
+    (eval/test_session.py). `sessions_root` is where session files live (the repository).
+
+    `sample` > 0 repeats an evaluation with fresh model calls, for the consistency study
+    (§12.3). A resumed run keeps the sample index it was started with.
+    """
     profile = load_profile(cfg.dataset.profile)
     frozen = None
+    if resume_dir is not None:
+        started = RunManifest.model_validate_json(
+            (resume_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        sample = int(started.details.get("sample", "0"))
+    if split == "test" and sample:
+        raise TestSetLockedError("A repeat run would be another look at the test split.")
     if split == "test":
         if session is None:
             raise TestSetLockedError(
@@ -251,6 +263,8 @@ def run_eval(
                 "dataset_hash": _dataset_hash(cfg, profile),
                 "issues": str(len(examples)),
                 "subset": cfg.eval.subset.as_posix() if cfg.eval.subset else "-",
+                # Only recorded for repeats, so first runs keep the manifest they always had.
+                **({"sample": str(sample)} if sample else {}),
             },
         )
         run_id = manifest.run_id
@@ -259,7 +273,7 @@ def run_eval(
 
     def client(for_cfg: Config) -> LLMClient:
         # One client per (sub-)config: a routed system's parts use different routes.
-        clients.append(wiring.build_llm_client(for_cfg, run_id=run_id))
+        clients.append(wiring.build_llm_client(for_cfg, run_id=run_id, sample=sample))
         return clients[-1]
 
     if frozen is not None and session is not None:

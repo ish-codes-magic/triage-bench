@@ -635,6 +635,57 @@ def judge_calibrate(
     (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))
 
 
+@judge_app.command("score")
+def judge_score(
+    run_dirs: Annotated[list[Path], typer.Argument(help="Dev runs whose comments to judge.")],
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    out: Annotated[Path, typer.Option(help="Where the table is written.")] = Path(
+        "reports/judge/dev-systems.md"
+    ),
+) -> None:
+    """T5: score every triage comment of the given runs with the calibrated judge."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.judge import Judge, SystemScores, judge_run, render_system_scores
+    from triagelab.eval.report import load_run
+    from triagelab.labeling.gold import load_items
+    from triagelab.labeling.ratings import load_rubric
+
+    load_dotenv()
+    cfg = load_config(config)
+    rubric = load_rubric(rubric_path)
+    profile = load_profile(cfg.dataset.profile)
+    issues = {i.snapshot.issue_ref: i for i in load_items(cfg.dataset.data_dir, profile, ("dev",))}
+    run_dir, _ = create_run(
+        cfg,
+        runs_dir=cfg.paths.runs_dir,
+        command="judge score " + " ".join(d.name for d in run_dirs),
+        now=datetime.now(UTC),
+        git=git_info(Path.cwd()),
+        details={"split": "dev"},
+    )
+    client = wiring.build_llm_client(cfg, run_id=run_dir.name)
+    judge = Judge(client, cfg.llm, rubric, profile.repo)
+    rows: list[SystemScores] = []
+    for scored in run_dirs:
+        run_cfg, split, predictions = load_run(scored)
+        if split != "dev":  # the judge was calibrated on dev comments; test is not for this
+            raise typer.BadParameter(f"{scored.name} is a {split} run; only dev runs are judged")
+        latest = list({p.issue_ref: p for p in predictions}.values())
+        row = judge_run(
+            judge, rubric, run_cfg.name, scored.name, latest, issues,
+            workers=cfg.eval.concurrency, log=typer.echo,
+        )  # fmt: skip
+        rows.append(row)
+    write_cost(run_dir, client.stats)
+    table = render_system_scores(rows, rubric)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    heading = "# T5: triage comments of the final systems, judged (dev)"
+    out.write_bytes(f"{heading}\n\n{table}".encode())
+    _echo_report(table)
+    typer.echo(f"cost ${client.stats.cost_usd:.4f}; written to {out.as_posix()}")
+
+
 @app.command("gold-report")
 def gold_report(
     split: str = "dev",

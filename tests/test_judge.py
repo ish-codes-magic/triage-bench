@@ -17,9 +17,12 @@ from triagelab.eval.judge import (
     agreement,
     bias_shift,
     build_messages,
+    judge_run,
+    render_system_scores,
 )
 from triagelab.labeling.gold import LabelingItem, load_items
 from triagelab.labeling.ratings import Rating, RatingItem, load_rubric
+from triagelab.triage import TriageResult
 
 from .fakes import FAKE_MODEL, FakeBackend, make_client
 from .smoke_dataset import PROFILE_PATH, write_smoke_dataset
@@ -125,3 +128,30 @@ def test_judge_test_is_scored_once_per_frozen_judge(tmp_path: Path) -> None:
     with pytest.raises(JudgeTestLockedError, match="already scored"):
         guard.authorize(rubric_version=1)
     guard.authorize(rubric_version=2)  # a new rubric is a new judge
+
+
+def test_a_run_is_judged_and_a_missing_comment_scores_the_floor(
+    tmp_path: Path, issue: LabelingItem
+) -> None:
+    backend = FakeBackend(text=verdict(correctness=4, actionability=2, tone=3))
+    judge = Judge(make_client(tmp_path, backend), LLMConfig(model=FAKE_MODEL), RUBRIC, "o/r")
+    ref = issue.snapshot.issue_ref
+    predictions = [
+        TriageResult(issue_ref=ref, triage_comment="See Lib/zipfile.py."),
+        TriageResult(issue_ref=ref, triage_comment="   "),  # a fallback wrote nothing
+        TriageResult(issue_ref="o/r#999", triage_comment="not an issue of this split"),
+    ]
+    row = judge_run(judge, RUBRIC, "agent", "run-1", predictions, {ref: issue})
+    assert backend.calls == 1  # only the written comment is sent to the judge
+    assert row.empty == 1
+    assert row.scores == [
+        {"correctness": 4, "actionability": 2, "tone": 3},
+        {"correctness": 1, "actionability": 1, "tone": 1},
+    ]
+    table = render_system_scores([row], RUBRIC, resamples=50)
+    cells = [c.strip() for c in table.splitlines()[2].strip("|").split("|")]
+    assert cells[:2] == ["agent", "2"]
+    assert cells[2].startswith("2.50 [")  # correctness: the mean of 4 and 1
+    assert cells[3].startswith("1.50 [")  # actionability: the mean of 2 and 1
+    assert cells[5] == "1"  # issues without a comment
+    assert "tone (not validated)" in table.splitlines()[0]

@@ -1185,10 +1185,15 @@ def demo(
         Path | None, typer.Option(help="Also draw the steps as an animated GIF.")
     ] = None,
     seconds: Annotated[float, typer.Option(help="Length of the GIF.")] = 75.0,
+    markdown: Annotated[
+        Path | None, typer.Option(help="Also write the steps as a Markdown page (for the site).")
+    ] = None,
     labels: Annotated[str, typer.Option(help="The reference shown last: silver | gold")] = "gold",
 ) -> None:
     """One issue's path through the cascade, step by step, from the run's stored traces.
     Calls no model."""
+    import os
+
     from triagelab.data.profile import load_profile
     from triagelab.demo import render_gif, render_text, storyboard, total_ms
     from triagelab.eval.dataset import load_split
@@ -1215,6 +1220,42 @@ def demo(
     if gif is not None:
         render_gif(steps, gif, scale=seconds * 1000 / total_ms(steps))
         typer.echo(f"written to {gif.as_posix()} ({len(steps)} frames, {seconds:.0f} s)")
+    if markdown is not None:
+        image = ""
+        if gif is not None:
+            relative = Path(os.path.relpath(gif, markdown.parent)).as_posix()
+            image = f"![The same steps as an animation]({relative})\n\n"
+        page = (
+            "# One issue through the cascade\n\n"
+            f"`{issue_ref}`, a dev-split issue, as the live cascade handled it. This page is "
+            "generated from the run's stored traces "
+            f'(`triagelab demo runs/{run_dir.name} "{issue_ref}"`), so it shows what happened, '
+            "including the steps that don't flatter the system.\n\n"
+            f"{image}```text\n{render_text(steps)}```\n"
+        )
+        markdown.parent.mkdir(parents=True, exist_ok=True)
+        markdown.write_bytes(page.encode("utf-8"))
+        typer.echo(f"written to {markdown.as_posix()}")
+
+
+site_app = typer.Typer(help="The static results site.", no_args_is_help=True)
+app.add_typer(site_app, name="site")
+
+
+@site_app.command("build")
+def site_build(
+    spec: Annotated[Path, typer.Option(help="Which reports go on which page.")] = Path(
+        "reports/site.yaml"
+    ),
+    out: Annotated[Path, typer.Option(help="Where the HTML is written (replaced).")] = Path("site"),
+) -> None:
+    """Build the results site from the committed reports. Needs no data and no model."""
+    from triagelab.site import build_site, load_spec
+
+    pages = build_site(load_spec(spec), Path(), out)
+    for page in pages:
+        typer.echo(page.as_posix())
+    typer.echo(f"{len(pages)} pages written to {out.as_posix()}/")
 
 
 session_app = typer.Typer(help="Frozen test-set evaluation sessions.", no_args_is_help=True)

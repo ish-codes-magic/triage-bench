@@ -109,3 +109,25 @@ jobs:
             tail -n 1 pytest.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  reproduce:
+    # The README's "reproduce in 3 commands", run for real on a machine that has nothing:
+    # clone, install, `triagelab reproduce`. It downloads the public test packs, checks
+    # their pinned SHA-256, re-scores the committed predictions against the committed
+    # adjudicated labels, and fails if a headline table differs by a byte. No API key.
+    name: Reproduce headline tables
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      - name: triagelab reproduce
+        run: |
+          uv run triagelab reproduce | tee reproduce.log
+          {
+            echo "### Headline tables, rebuilt on a fresh runner"
+            echo
+            cat reproduce.log
+          } >> "$GITHUB_STEP_SUMMARY"

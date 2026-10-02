@@ -104,3 +104,25 @@ def paired_bootstrap(
         share_b_better=sum(d > 0 for d in deltas) / len(deltas) if deltas else float("nan"),
         valid_resamples=len(deltas),
     )
+
+
+def zero_failure_bound(n: int, confidence: float = 0.95) -> float:
+    """The largest failure rate still consistent with seeing 0 failures in `n` trials.
+
+    A bootstrap interval is useless for a perfect score: every resample of 50 correct
+    answers is 50 correct answers, so the interval is [1.00, 1.00] (M8: the routed
+    system's type label on the CPython test split). The exact answer comes from asking
+    which failure rate p would still have produced `n` clean trials with probability
+    1 - confidence:
+
+        (1 - p) ** n = 1 - confidence
+
+    Solve for p. For 95% confidence it is close to 3 / n, the "rule of three".
+
+    # YOUR TURN
+    Hints:
+      - n = 0 tells you nothing: return 1.0.
+      - n < 0, or a confidence outside (0, 1), is a caller's bug: raise ValueError.
+      - The answer for n = 50 at 95% is about 0.058, so accuracy is "above 0.94".
+    """
+    raise NotImplementedError("YOUR TURN: see the docstring")

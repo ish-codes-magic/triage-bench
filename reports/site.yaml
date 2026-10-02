@@ -9,6 +9,10 @@ pages:
     title: Overview
     sources:
       - reports/site/overview.md
+  - slug: report
+    title: Report
+    sources:
+      - reports/REPORT.md
   - slug: test-set
     title: Test set
     sources:
@@ -32,6 +36,7 @@ pages:
       - reports/calibration/e6-gold.md
       - reports/cascade/e7-gold.md
       - reports/consistency/dev-gold.md
+      - reports/judge/dev-systems.md
   - slug: trace
     title: Example trace
     sources:

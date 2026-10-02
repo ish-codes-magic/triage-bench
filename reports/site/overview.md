@@ -1,6 +1,6 @@
 # triagelab: results
 
-An eval-driven GitHub issue-triage system. A cheap tier handles routine decisions, an LLM agent with MCP tools and repo-specific Agent Skills handles the rest, and every design choice is measured: accuracy with confidence intervals, calibration, cost, consistency and failure analysis. The code, the decisions and the full report are in the [repository](../../README.md).
+An eval-driven GitHub issue-triage system. A cheap tier handles routine decisions, an LLM agent with MCP tools and repo-specific Agent Skills handles the rest, and every design choice is measured: accuracy with confidence intervals, calibration, cost, consistency and failure analysis. Start with the [technical report](../REPORT.md); the code and the decision log are in the [repository](../../README.md).
 
 ## The held-out test set, evaluated once
 

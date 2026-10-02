@@ -1,0 +1,111 @@
+name: Test-set evaluation
+
+# Evaluation hygiene as policy in code (AGENTS.md §7.4, §12.8, ADR-0046). The test split is
+# evaluated through a frozen *session* file that was committed before this run: it names
+# the configs and pins the code, skills and dataset they run on. The CLI refuses anything
+# that isn't in the session, any change since the freeze, a second run of the same config,
+# and a third session; this workflow adds the owner's approval and refuses to run a
+# session that already succeeded here.
+#
+# Manual only. No other workflow can reach the test split: the regression gate's eval
+# pack has no test-period data, and only this workflow unpacks a test pack.
+run-name: test-eval ${{ inputs.session }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "The committed session file, e.g. reports/test-eval/python__cpython/session-1.yaml"
+        required: true
+        type: string
+      profile:
+        description: "The repository profile, e.g. configs/repos/python__cpython.yaml"
+        required: true
+        type: string
+      pack_tag:
+        description: "Release tag of the test pack, e.g. testpack-python__cpython-v1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  test-eval:
+    name: Evaluate a frozen session on the test split
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: eval # the owner's approval, and the API key
+    permissions:
+      contents: read # checkout, and the test pack (a release asset)
+      actions: read # the already-ran check reads this workflow's past runs
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SESSION: ${{ inputs.session }}
+      PROFILE: ${{ inputs.profile }}
+      PACK_TAG: ${{ inputs.pack_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse a session that already ran here
+        run: |
+          test -f "$SESSION" || { echo "::error::No such session file: $SESSION"; exit 1; }
+          ran=$(gh run list --workflow test-eval.yml --status success --limit 100 \
+            --json databaseId,displayTitle \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }})
+                        | select(.displayTitle == \"test-eval $SESSION\")] | length")
+          if [ "$ran" -gt 0 ]; then
+            echo "::error::$SESSION was already evaluated by this workflow."
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-env
+
+      - name: Download and verify the test pack
+        run: |
+          gh release download "$PACK_TAG" --pattern testpack.tar.gz --dir "$RUNNER_TEMP"
+          uv run triagelab gate unpack "$RUNNER_TEMP/testpack.tar.gz" -p "$PROFILE" \
+            --data-dir data --allow-test
+
+      - name: Cache the frozen source checkout and the embedding model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            data/checkouts
+            .cache/fastembed
+          key: test-eval-inputs-${{ hashFiles(inputs.profile) }}
+
+      - name: Frozen source checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run triagelab data checkout -p "$PROFILE"
+
+      - name: Evaluate every config of the session, once each
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: uv run triagelab test-session run "$SESSION"
+
+      - name: Results (silver labels) to the job summary
+        run: |
+          {
+            echo "### Test-set evaluation: \`$SESSION\`"
+            echo
+            uv run triagelab results --split test --profile "$PROFILE" --out-dir "$RUNNER_TEMP/results"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the runs and the audit log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-eval-runs
+          path: |
+            runs/
+            reports/test-eval/**/audit.jsonl
+          retention-days: 90

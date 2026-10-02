@@ -1177,6 +1177,46 @@ def consistency(
     typer.echo(f"written to {out.as_posix()}")
 
 
+@app.command()
+def demo(
+    run_dir: Annotated[Path, typer.Argument(help="A finished cascade run, e.g. runs/<run_id>.")],
+    issue_ref: Annotated[str, typer.Argument(help="One of its issues, e.g. python/cpython#1.")],
+    gif: Annotated[
+        Path | None, typer.Option(help="Also draw the steps as an animated GIF.")
+    ] = None,
+    seconds: Annotated[float, typer.Option(help="Length of the GIF.")] = 75.0,
+    labels: Annotated[str, typer.Option(help="The reference shown last: silver | gold")] = "gold",
+) -> None:
+    """One issue's path through the cascade, step by step, from the run's stored traces.
+    Calls no model."""
+    from triagelab.data.profile import load_profile
+    from triagelab.demo import render_gif, render_text, storyboard, total_ms
+    from triagelab.eval.dataset import load_split
+    from triagelab.eval.report import examples_for, load_run
+
+    cfg, split, _ = load_run(run_dir)
+    if cfg.system is None or cfg.system.cascade is None:
+        raise typer.BadParameter(f"{run_dir.as_posix()} is not a cascade run")
+    profile = load_profile(cfg.dataset.profile)
+    snapshots = {
+        e.snapshot.issue_ref: e.snapshot for e in load_split(cfg.dataset.data_dir, profile, split)
+    }
+    if issue_ref not in snapshots:
+        raise typer.BadParameter(f"{issue_ref} is not in this run's {split} split")
+    references = {e.snapshot.issue_ref: e.gold for e in examples_for(cfg, split, _labels(labels))}
+    steps = storyboard(
+        run_dir,
+        snapshots[issue_ref],
+        references.get(issue_ref),
+        profile.taxonomy.type,
+        max_tokens=load_config(cfg.system.cascade.cheap).llm.max_tokens,
+    )
+    _echo_report(render_text(steps))
+    if gif is not None:
+        render_gif(steps, gif, scale=seconds * 1000 / total_ms(steps))
+        typer.echo(f"written to {gif.as_posix()} ({len(steps)} frames, {seconds:.0f} s)")
+
+
 session_app = typer.Typer(help="Frozen test-set evaluation sessions.", no_args_is_help=True)
 app.add_typer(session_app, name="test-session")
 

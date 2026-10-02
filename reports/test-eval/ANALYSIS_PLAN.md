@@ -2,6 +2,8 @@
 
 Written on 2026-10-02, after both sessions were frozen (`682f46a`) and dispatched, and **before any test result existed**. It fixes what will be computed and how it will be read, so the analysis can't be shaped by the numbers. Anything done beyond this plan is labelled "exploratory" in the report.
 
+Session 1 was re-frozen once on 2026-10-02 because of a bug in the session tooling, before any test issue was scored (ADR-0046, "Correction"). The configs and this plan are unchanged.
+
 ## What is scored
 
 - **Runs:** the five configs of each session, exactly as produced by `test-eval.yml`. An issue that ends as a fallback or an error is scored as a wrong answer, never dropped.

@@ -1006,6 +1006,16 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - GitHub dispatches only workflows that exist on the default branch, so `test-eval.yml` reached `main` through its own small PR (#8) and is dispatched against the M8 branch, where the session files live.
 - Freezing through the real command found a bug the unit tests had missed (two `--config` options on `test-session freeze`). It was fixed before the freeze, and the command now has a test that goes through the CLI.
 
+**Correction: session 1 was re-frozen once, before anything was scored (2026-10-02).**
+- **What happened:** the first CPython run (36947286684) was refused in CI at the first config, with "The code, skills or configs changed after the session was frozen". Nothing had changed: `git diff 682f46a -- src skills configs` was empty.
+- **Cause:** `code_hash` sorted `Path` objects. They compare case-insensitively on Windows and case-sensitively on Linux, so `SKILL.md` and `references/` hashed in a different order on the machine that froze the session and the one that ran it. The existing test covered line endings but not file order.
+- **Nothing was evaluated:** the run stopped at authorization, wrote no run and no audit line, and uploaded no artifact. The queued uv run was cancelled before it started.
+- **Fix:** files are sorted by their path parts as plain strings. Two tests were added:
+  - a hand-computed digest that pins the order;
+  - a check that every committed session that hasn't run yet matches the checkout (code hash and every config fingerprint). CI runs it on Linux and Windows, so a freeze is verified on both before a run is requested.
+- **Re-freeze:** session 1 of both repositories was frozen again in place with the same configs. The session files differ from the first freeze only in `created_at`, `code_hash` and the note; all ten config fingerprints and both dataset hashes are unchanged. Since the first freeze, the frozen trees differ only in that one function.
+- **Why not session 2:** the limit of two sessions counts evaluations of the test split, and none took place. Opening session 2 would have spent the project's one spare evaluation on a tooling bug.
+
 ## ADR-0047: Repository-specific prompt wording lives in the profile
 
 **Context.**

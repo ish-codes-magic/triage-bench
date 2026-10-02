@@ -1064,3 +1064,92 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 - The six test runs that use retrieval are clean: 6,478 past issues, none the issue itself, none newer, none with later labels (`reports/test-eval/context-audit.md`).
 - The 1.00 is reported as an easier sample, with the audit as evidence (`reports/test-eval/RESULTS.md`, section 5).
 - Limits: a tool result truncated in the trace loses its labels (7 of 6,478; counted, not checked), and code search is outside the audit because the checkout is frozen before the data window.
+
+## ADR-0049: Consistency is measured by repeating a run with a sample index
+
+**Context.**
+- §12.3 asks for each dev issue to be run k times, with pass^k and the agreement between runs.
+- Temperature 0 does not make a hosted model deterministic, and the response cache would replay one answer k times.
+- `LLMRequest.sample` has been part of the cache key since M0 for this purpose, but nothing set it.
+
+**Decision.**
+- `triagelab eval --sample N` stamps N on every model request of the run. Sample 0 is the original run, so no existing cache key changes; N > 0 makes fresh calls with their own cache entries, and the run stays resumable.
+- The index is a run property (recorded in the manifest, kept on resume), not a config field, so config fingerprints are untouched.
+- A repeat is refused on the test split, and repeats never appear in results tables.
+- `eval/consistency.py` reports four numbers per decision, with bootstrap intervals: accuracy, pass^k, "ever right" and "unanimous".
+- k = 3, on dev, for the three final systems.
+
+**Consequences.**
+- Cost: about $1.60 for two repeats of the routed system and the full agent; the stuffed agent's repeats were free (the routed runs had made the same calls).
+- The result (`reports/consistency/dev-gold.md`): typed decisions are stable (type label unanimous on 99% of issues, component on 100%), agents are not (the full agent's type label: accuracy 0.77, pass^3 0.67).
+- k = 3 is the minimum §12.3 allows; a larger k would lower pass^k further.
+
+## ADR-0050: repo-intel ships inside the triagelab distribution; publishing is opt-in
+
+**Context.**
+- §8 wants the MCP server "publishable independently", and §12.8 a `release.yml` that publishes it to PyPI and GHCR with build provenance.
+- The server shares the retrieval, snapshot and profile modules with the evaluation code.
+
+**Decision.**
+- One distribution, `triagelab`, with a second entry point `repo-intel` and its own README (`src/triagelab/mcp_server/README.md`). A separate distribution would mean a workspace split and a third package for the shared modules, at the last milestone, for no measured need (§18).
+- A `Dockerfile` builds an image whose entry point is `repo-intel`; the data folder is mounted.
+- `release.yml` runs on a `v*` tag: it builds the sdist, the wheel and the image, checks that they start, and attaches build provenance. Each destination is switched on by the owner:
+  - PyPI: `PYPI_ENABLED`, a `pypi` environment and a trusted publisher (OIDC, no stored token);
+  - GHCR: `GHCR_ENABLED`.
+- Pull requests that touch the packaging build both, without attesting or publishing.
+
+**Consequences.**
+- Nothing is published until the owner opts in; a tag without the switches is a full dry run.
+- Installing the server also installs the evaluation dependencies (LiteLLM, matplotlib and others). Reported as a limit in the server's README.
+- The image could not be built locally (no Docker daemon); the PR build job is its test.
+- The names `triagelab` and `repo-intel` were free on PyPI on 2026-10-02; that can change before a first publish.
+
+## ADR-0051: "Reproduce" means re-scoring the committed predictions
+
+**Context.**
+- M9 is done when a stranger can reproduce the headline numbers in three commands with cached responses.
+- The headline numbers are the test-set tables. Their model calls were made once, in CI; replaying them would need the API, and running them again would be a second evaluation of the test split (ADR-0046).
+
+**Decision.**
+- `triagelab reproduce` rebuilds both test tables from three fixed inputs: the public test pack (SHA-256 pinned in `reports/test-eval/reproduce.yaml`), the session records committed under `reports/test-eval/`, and the adjudicated labels in `data/gold/`.
+- It uses the same code path as `triagelab results` and compares its output byte for byte with the committed tables.
+- CI runs it on a fresh runner on every pull request.
+
+**Consequences.**
+- The three commands are `git clone`, `uv sync`, `uv run triagelab reproduce`: no API key, no data collection, about 50 MB of downloads.
+- What is reproduced is the scoring of recorded predictions, not the model's behaviour. The README says so.
+- Any change to scoring that alters a headline number now fails CI until the tables are regenerated and reviewed.
+
+## ADR-0052: The cascade also exists live, and the demo is rendered from its traces
+
+**Context.**
+- E7 evaluated the cascade offline, by recombining stored runs. §17 asks for a demo of one issue flowing through the cascade and escalating, with its trace.
+- A screen recording cannot be regenerated, and "every figure is regenerated by a script" (§16).
+
+**Decision.**
+- `system.kind: cascade` (`decisions/live_cascade.py`): the cheap tier triages; if its own confidence is below τ, the full agent does. It uses the offline module's `self_signal`, each tier writes its own traces, and every routing is logged.
+- `configs/experiments/cascade.yaml` applies the τ chosen on dev in E7 (0.70).
+- `triagelab demo <run> <issue>` turns one issue's stored traces into terminal-style steps, as text and as a GIF drawn with Pillow. No model is called.
+- The demo issue is a dev issue whose escalation changed the outcome.
+
+**Consequences.**
+- On dev the live cascade reproduces the offline recombination exactly: the same 6 of 100 issues escalate, and all 100 answers are identical. The offline numbers were not an artefact of recombining.
+- The demo shows the system's weak spots too: the cheap tier runs out of output tokens, and the agent is forced to answer at its step limit.
+- An escalated issue pays for both tiers; the cost shown includes both.
+
+## ADR-0053: The results site is assembled from the committed reports
+
+**Context.**
+- §17 asks for a static results site generated from the run registry. The registry (`runs/`) is not in git, and CI has no data.
+- Every table and figure under `reports/` is already generated from the registry by a command.
+
+**Decision.**
+- `triagelab site build` converts a declared list of those Markdown files (`reports/site.yaml`) to HTML pages with one layout.
+- Markdown conversion is markdown-it's job. The assembly is ours: images are copied and re-pointed, links between reports become links between pages, and links to other repository files point to GitHub.
+- `pages.yml` builds the site on every change to a report and publishes it only when the owner sets `PAGES_ENABLED`.
+- Not taken: MkDocs or Sphinx (a second configuration and theme system for six pages).
+
+**Consequences.**
+- The site builds from a fresh checkout, so a broken link or a missing figure fails a pull request.
+- The site cannot drift from the reports: it has no content of its own except one overview page.
+- No search and no client-side rendering: the architecture diagram stays in the README.

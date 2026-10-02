@@ -39,8 +39,8 @@ def fake_backend(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
     backend = FakeBackend(text='{"reply": "pong"}')
     real_build = wiring.build_llm_client
 
-    def build(cfg: Config, *, run_id: str) -> LLMClient:
-        return real_build(cfg, run_id=run_id, backend=backend)
+    def build(cfg: Config, *, run_id: str, sample: int = 0) -> LLMClient:
+        return real_build(cfg, run_id=run_id, backend=backend, sample=sample)
 
     monkeypatch.setattr(wiring, "build_llm_client", build)
     return backend

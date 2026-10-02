@@ -1,0 +1,12 @@
+# Consistency on dev (AGENTS.md §12.3): each final config run three times on the same 100
+# issues. The first run of each group is the original (sample 0); the others were made
+# with `triagelab eval --sample 1` and `--sample 2`.
+# Regenerate with: triagelab consistency reports/consistency/dev.yaml
+title: "Consistency on dev: three runs of each final config"
+groups:
+  - name: routed system
+    runs: [20261002-111057-routed-bb4345, 20261002-111255-routed-bb4345, 20261002-113110-routed-bb4345]
+  - name: stuffed agent
+    runs: [20261002-115926-e3-stuffed-dde819, 20261002-115055-e3-stuffed-dde819, 20261002-115127-e3-stuffed-dde819]
+  - name: full agent
+    runs: [20261002-115445-agent-5f73a1, 20261002-111255-agent-5f73a1, 20261002-113110-agent-5f73a1]

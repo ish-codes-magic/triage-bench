@@ -9,11 +9,13 @@ dependencies = [
     "fastembed>=0.8.1",
     "httpx>=0.28.1",
     "litellm>=1.103.0",
+    "markdown-it-py>=4.0.0",
     "matplotlib>=3.11.2",
     "mcp>=2.2,<3",
     "openinference-semantic-conventions==0.1.39",
     "opentelemetry-exporter-otlp-proto-http==1.45.0",
     "opentelemetry-sdk==1.45.0",
+    "pillow>=12.3.0",
     "pyarrow>=25.0.1",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
@@ -25,6 +27,8 @@ dependencies = [
 
 [project.scripts]
 triagelab = "triagelab.cli:app"
+# The MCP server on its own, for MCP clients: `uvx --from triagelab repo-intel --profile ...`
+repo-intel = "triagelab.mcp_server.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11.18,<0.12.0"]

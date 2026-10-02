@@ -13,7 +13,7 @@ Calibration:
 """
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,10 +23,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from triagelab.config import LLMConfig
 from triagelab.data.storage import append_jsonl, read_jsonl
 from triagelab.eval.agreement import adjacent_agreement, exact_agreement, weighted_kappa
+from triagelab.eval.bootstrap import bootstrap_ci
 from triagelab.labeling.gold import Evidence, LabelingItem
 from triagelab.labeling.ratings import JudgeSplit, Rating, RatingItem, Rubric, judge_split
 from triagelab.llm_client import LLMClient, LLMRequest, Message
 from triagelab.prompting import UNTRUSTED_ISSUE
+from triagelab.triage import TriageResult
 
 # Bump with any change to the prompt below, the schema, or how evidence is rendered.
 # v2: scale-use guidance, after judge-dev v1 showed the judge saturating at 4 (tone QWK 0.10).
@@ -285,3 +287,94 @@ def render_agreement(rows: Sequence[CriterionAgreement], split: str) -> str:
 def save_scores(path: Path, scores: Sequence[JudgeScore]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(s.model_dump()) + "\n" for s in scores), encoding="utf-8")
+
+
+# --- Scoring systems (M9): the calibrated judge applied to whole runs -----------------
+
+# Criteria whose agreement with the rater was too low to rely on (judge-test: tone QWK
+# 0.17). Their scores are shown, marked, so nobody reads them as measured.
+UNVALIDATED = ("tone",)
+
+
+class SystemScores(BaseModel):
+    """One run's triage comments, judged: a score per criterion for every issue."""
+
+    name: str
+    run_id: str
+    scores: list[dict[str, int]]
+    # Issues where the system wrote no comment (a fallback, or an empty string). They
+    # are not sent to the judge; they get the bottom of the scale on every criterion.
+    empty: int
+    cost_usd: float
+
+
+def judge_run(
+    judge: Judge,
+    rubric: Rubric,
+    name: str,
+    run_id: str,
+    predictions: Sequence[TriageResult],
+    issues: Mapping[str, LabelingItem],
+    *,
+    workers: int = 4,
+    log: Callable[[str], None] = lambda _: None,
+) -> SystemScores:
+    items = [
+        RatingItem(
+            item_id=f"{run_id}:{p.issue_ref}",
+            issue_ref=p.issue_ref,
+            number=issues[p.issue_ref].snapshot.number,
+            system=name,
+            run_id=run_id,
+            comment=p.triage_comment,
+        )
+        for p in predictions
+        if p.issue_ref in issues
+    ]
+    written = [i for i in items if i.comment.strip()]
+    judged = judge.score_all([(i, issues[i.issue_ref]) for i in written], workers=workers, log=log)
+    floor = {c.name: min(rubric.scale) for c in rubric.criteria}
+    empty = len(items) - len(written)
+    return SystemScores(
+        name=name,
+        run_id=run_id,
+        scores=[j.scores for j in judged] + [floor] * empty,
+        empty=empty,
+        cost_usd=sum(j.cost_usd for j in judged),
+    )
+
+
+def render_system_scores(
+    rows: Sequence[SystemScores], rubric: Rubric, *, resamples: int = 1000
+) -> str:
+    """Mean score per criterion and system, with a bootstrap interval over issues."""
+    names = [c.name for c in rubric.criteria]
+    heads = [f"{n} (not validated)" if n in UNVALIDATED else n for n in names]
+    lines = [
+        f"| system | comments | {' | '.join(heads)} | no comment | judge cost |",
+        "|---|---|" + "---|" * len(names) + "---|---|",
+    ]
+    for row in rows:
+        cells: list[str] = []
+        for name in names:
+            values = [s[name] for s in row.scores]
+
+            def mean(idx: Sequence[int], values: list[int] = values) -> float | None:
+                return sum(values[i] for i in idx) / len(idx) if idx else None
+
+            ci = bootstrap_ci(len(values), mean, resamples=resamples)
+            cells.append(f"{ci.point:.2f} [{ci.low:.2f}, {ci.high:.2f}]")
+        lines.append(
+            f"| {row.name} | {len(row.scores)} | {' | '.join(cells)} | {row.empty} | "
+            f"${row.cost_usd:.2f} |"
+        )
+    low, high = min(rubric.scale), max(rubric.scale)
+    lines += [
+        "",
+        f"Mean rubric score ({low}-{high}, higher is better) with a 95% bootstrap interval over "
+        f"issues. Judge prompt v{JUDGE_PROMPT_VERSION}, rubric v{rubric.version}. An issue "
+        f"with no comment scores {low} on every criterion. Runs: "
+        + ", ".join(f"`{r.run_id}`" for r in rows)
+        + ".",
+    ]
+    return "\n".join(lines) + "\n"

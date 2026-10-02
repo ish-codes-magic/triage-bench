@@ -26,14 +26,14 @@ from triagelab import wiring
 from triagelab.baselines.classifier import ClassifierTriager
 from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
 from triagelab.baselines.majority import MajorityTriager
-from triagelab.config import Config, RoutedConfig, read_subset
+from triagelab.config import CascadeConfig, Config, RoutedConfig, read_subset
 from triagelab.cost import BudgetExceededError
 from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile, load_profile
 from triagelab.data.splits import Split
 from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_parquet
 from triagelab.eval.dataset import EvalExample, family_vocabulary, load_history, load_split
-from triagelab.eval.registry import create_run, git_info, write_cost
+from triagelab.eval.registry import RunManifest, create_run, git_info, write_cost
 from triagelab.eval.score import Scorecard, score
 from triagelab.eval.test_session import TestSetLockedError, authorize, record
 from triagelab.llm_client import CallStats, CassetteMissError, LLMClient
@@ -83,6 +83,10 @@ def build_triager(
         return _build_routed(
             cfg, cfg.system.routed, profile, client, run_id=run_id, run_dir=run_dir, stack=stack
         )
+    if cfg.system.cascade is not None:  # kind == "cascade"
+        return _build_cascade(
+            cfg, cfg.system.cascade, profile, client, run_id=run_id, run_dir=run_dir, stack=stack
+        )
     if cfg.system.agent is not None:  # kind == "agent" (the config validator pairs them)
         from triagelab.harness.factory import build_agent  # MCP/OTel imports only when needed
 
@@ -108,6 +112,51 @@ def build_triager(
     )
 
 
+def _part(cfg: Config, path: Path) -> Config:
+    """A composed system's part: its own model and system, in the composing run's
+    environment (where the data, cache, budget and traces live is the run's decision)."""
+    from triagelab.config import load_config
+
+    return load_config(path).model_copy(
+        update={
+            "dataset": cfg.dataset,
+            "paths": cfg.paths,
+            "cache": cfg.cache,
+            "budget": cfg.budget,
+            "tracing": cfg.tracing,
+        }
+    )
+
+
+def _build_cascade(
+    cfg: Config,
+    cascade: CascadeConfig,
+    profile: RepoProfile,
+    client: Callable[[Config], LLMClient],
+    *,
+    run_id: str,
+    run_dir: Path,
+    stack: ExitStack,
+) -> Triager:
+    from triagelab.decisions.live_cascade import CascadeTriager, routing_log
+
+    def tier(name: str, path: Path) -> Triager:
+        # Each tier keeps its own traces and server log, so either can be read alone.
+        tier_dir = run_dir / name
+        tier_dir.mkdir(exist_ok=True)
+        return build_triager(
+            _part(cfg, path), profile, client, run_id=run_id, run_dir=tier_dir, stack=stack
+        )
+
+    return CascadeTriager(
+        tier("cheap", cascade.cheap),
+        tier("full", cascade.full),
+        profile.taxonomy.type,
+        cascade.tau,
+        on_routing=routing_log(run_dir),
+    )
+
+
 def _build_routed(
     cfg: Config,
     routed: RoutedConfig,
@@ -119,23 +168,11 @@ def _build_routed(
     stack: ExitStack,
 ) -> Triager:
     """Build every part from its own experiment config, in this run's environment."""
-    from triagelab.config import load_config
     from triagelab.decisions.questions import QuestionId
     from triagelab.decisions.routed import RoutedTriager
 
     def part(path: Path) -> Config:
-        # The part contributes its model and system; where the data, cache and budget
-        # live is the routed run's decision.
-        sub = load_config(path)
-        return sub.model_copy(
-            update={
-                "dataset": cfg.dataset,
-                "paths": cfg.paths,
-                "cache": cfg.cache,
-                "budget": cfg.budget,
-                "tracing": cfg.tracing,
-            }
-        )
+        return _part(cfg, path)
 
     def build(sub: Config) -> Triager:
         return build_triager(sub, profile, client, run_id=run_id, run_dir=run_dir, stack=stack)
@@ -209,11 +246,23 @@ def run_eval(
     session: Path | None = None,
     sessions_root: Path = Path(),
     resume_dir: Path | None = None,
+    sample: int = 0,
 ) -> RunOutcome:
     """`session`: the frozen test session this run belongs to; required for the test split
-    (eval/test_session.py). `sessions_root` is where session files live (the repository)."""
+    (eval/test_session.py). `sessions_root` is where session files live (the repository).
+
+    `sample` > 0 repeats an evaluation with fresh model calls, for the consistency study
+    (§12.3). A resumed run keeps the sample index it was started with.
+    """
     profile = load_profile(cfg.dataset.profile)
     frozen = None
+    if resume_dir is not None:
+        started = RunManifest.model_validate_json(
+            (resume_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        sample = int(started.details.get("sample", "0"))
+    if split == "test" and sample:
+        raise TestSetLockedError("A repeat run would be another look at the test split.")
     if split == "test":
         if session is None:
             raise TestSetLockedError(
@@ -251,6 +300,8 @@ def run_eval(
                 "dataset_hash": _dataset_hash(cfg, profile),
                 "issues": str(len(examples)),
                 "subset": cfg.eval.subset.as_posix() if cfg.eval.subset else "-",
+                # Only recorded for repeats, so first runs keep the manifest they always had.
+                **({"sample": str(sample)} if sample else {}),
             },
         )
         run_id = manifest.run_id
@@ -259,7 +310,7 @@ def run_eval(
 
     def client(for_cfg: Config) -> LLMClient:
         # One client per (sub-)config: a routed system's parts use different routes.
-        clients.append(wiring.build_llm_client(for_cfg, run_id=run_id))
+        clients.append(wiring.build_llm_client(for_cfg, run_id=run_id, sample=sample))
         return clients[-1]
 
     if frozen is not None and session is not None:

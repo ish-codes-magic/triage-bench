@@ -1,0 +1,76 @@
+name: Results site
+
+# The static results site (AGENTS.md §17), built from the committed reports alone: no
+# data, no model, no secrets. Every PR that touches a report builds it, so a broken link
+# or a missing figure fails before merge. Publishing is a separate, opt-in step.
+#
+# Publishing to GitHub Pages is outward-facing, so it is switched on by the owner:
+#   1. Settings -> Pages -> Source: "GitHub Actions"
+#   2. Settings -> Variables -> Actions: PAGES_ENABLED = true
+# Until then the deploy job is skipped and nothing is published.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "reports/**"
+      - "data/DATASET_CARD.md"
+      - "src/triagelab/site.py"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "reports/**"
+      - "data/DATASET_CARD.md"
+      - "src/triagelab/site.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; never cancel a deployment half-way.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      - name: triagelab site build
+        run: |
+          uv run triagelab site build --out site | tee site.log
+          {
+            echo "### Results site"
+            echo '```'
+            cat site.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the site as a Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+          retention-days: 7
+
+  deploy:
+    name: Publish to GitHub Pages
+    # Only from main, and only once the owner has switched publishing on.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write # deploy to Pages
+      id-token: write # prove this workflow is the source of the deployment
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

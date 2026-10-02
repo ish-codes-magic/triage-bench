@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel
 
 from triagelab.config import Config
+from triagelab.data.build import dataset_paths
 from triagelab.data.profile import load_profile
 from triagelab.data.splits import Split, parse_split
 from triagelab.data.storage import read_jsonl, read_parquet
@@ -53,6 +54,8 @@ class ScoredRun(BaseModel):
     # Every model call came from the cache: answers and costs are the original run's, but
     # its latencies measure the replay, not the model.
     replayed: bool = False
+    # > 0 for a repeat made for the consistency study; results tables show first runs only.
+    sample: int = 0
 
 
 def _replayed(run_dir: Path) -> bool:
@@ -85,6 +88,7 @@ def load_scored_runs(runs_dir: Path) -> list[ScoredRun]:
                 metrics={k: MetricScore.model_validate(v) for k, v in metrics["metrics"].items()},
                 stats=SystemStats.model_validate(metrics["system"]),
                 replayed=_replayed(run_dir),
+                sample=int(manifest.details.get("sample", "0")),
             )
         )
     return runs
@@ -104,7 +108,7 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
     """
     latest: dict[str, ScoredRun] = {}
     for run in sorted(runs, key=lambda r: (r.stats.issues, r.created_at)):
-        if run.split == split:
+        if run.split == split and run.sample == 0:
             latest[run.name] = run
     rows = sorted(latest.values(), key=lambda r: r.name)
     header = (
@@ -136,6 +140,28 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
             "replay; the live run's latency applies."
         )
     return "\n".join(lines) + "\n"
+
+
+def results_document(
+    cfg: Config, runs_dir: Path, split: Split, labels: Labels, *, with_blind_pass: bool = False
+) -> str:
+    """The results file for one repository (the config's profile): a heading and the table.
+
+    One repository per table: only runs made on that repository's dataset are kept.
+    """
+    profile = load_profile(cfg.dataset.profile)
+    runs = load_scored_runs(runs_dir)
+    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
+    if report.is_file():
+        wanted = json.loads(report.read_text(encoding="utf-8")).get("dataset_hash")
+        runs = [r for r in runs if r.dataset_hash == wanted]
+    if labels == "gold":
+        runs = rescore_on_gold(runs, runs_dir, cfg, split, include_blind_pass=with_blind_pass)
+    table = results_table(runs, split)
+    if labels == "gold":
+        table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
+    heading = f"# Results: {profile.repo}, {split} split ({labels} labels)"
+    return "\n\n".join([heading, table])
 
 
 class DeltaRow(BaseModel):

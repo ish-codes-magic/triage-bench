@@ -270,6 +270,10 @@ def eval_cmd(
         typer.Option("--session", help="The frozen test session this run belongs to (test only)."),
     ] = None,
     resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
+    sample: Annotated[
+        int,
+        typer.Option(min=0, help="Repeat index for the consistency study: fresh model calls."),
+    ] = 0,
     otlp_endpoint: Annotated[
         str | None,
         typer.Option(
@@ -298,11 +302,13 @@ def eval_cmd(
             cfg,
             split=split_name,
             runs_dir=cfg.paths.runs_dir,
-            command=f"eval --config {config.as_posix()} --split {split}",
+            command=f"eval --config {config.as_posix()} --split {split}"
+            + (f" --sample {sample}" if sample else ""),
             log=typer.echo,
             limit=limit,
             session=session,
             resume_dir=resume,
+            sample=sample,
         )
     except TestSetLockedError as err:
         typer.echo(str(err), err=True)
@@ -364,41 +370,53 @@ def results(
 ) -> None:
     """Write the results table (latest run per experiment, on the config's repository) to
     reports/results/[<name>-]<split>.md."""
-    import json
-
-    from triagelab.data.build import dataset_paths
-    from triagelab.data.profile import load_profile
     from triagelab.data.splits import parse_split
-    from triagelab.eval.report import load_scored_runs, rescore_on_gold, results_table
+    from triagelab.eval.report import results_document
 
-    if labels not in ("silver", "gold"):
-        raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
     if repo_profile is not None:
         cfg = cfg.model_copy(
             update={"dataset": cfg.dataset.model_copy(update={"profile": repo_profile})}
         )
-    profile = load_profile(cfg.dataset.profile)
-    runs = load_scored_runs(cfg.paths.runs_dir)
-    # One repository per table: keep the runs made on this config's dataset.
-    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
-    if report.is_file():
-        wanted = json.loads(report.read_text(encoding="utf-8")).get("dataset_hash")
-        runs = [r for r in runs if r.dataset_hash == wanted]
-    if labels == "gold":
-        runs = rescore_on_gold(
-            runs, cfg.paths.runs_dir, cfg, parse_split(split), include_blind_pass=with_blind_pass
-        )
-    table = results_table(runs, split)
-    if labels == "gold":
-        table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
+    document = results_document(
+        cfg,
+        cfg.paths.runs_dir,
+        parse_split(split),
+        _labels(labels),
+        with_blind_pass=with_blind_pass,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{name}-{split}" if name else split
     out = out_dir / (f"{stem}.md" if labels == "silver" else f"{stem}-gold.md")
-    heading = f"# Results: {profile.repo}, {split} split ({labels} labels)"
-    out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
-    typer.echo(table)
+    out.write_bytes(document.encode("utf-8"))
+    typer.echo(document.split("\n\n", 1)[1])
     typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def reproduce(
+    spec: Annotated[
+        Path, typer.Option(help="What to rebuild, and from which public inputs.")
+    ] = Path("reports/test-eval/reproduce.yaml"),
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Rebuild the headline test-set tables from public inputs, and compare them with the
+    committed ones. Calls no model and needs no API key."""
+    from triagelab.eval.reproduce import ReproduceError, load_spec
+    from triagelab.eval.reproduce import reproduce as rebuild
+
+    try:
+        outcomes = rebuild(load_spec(spec), load_config(config))
+    except ReproduceError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=1) from err
+    for o in outcomes:
+        _echo_report(o.document)
+        verdict = "identical to" if o.matches else "DIFFERENT from"
+        typer.echo(f"{o.repo}: dataset {o.dataset}; the table is {verdict} {o.expected.as_posix()}")
+        typer.echo("")
+    if not all(o.matches for o in outcomes):
+        raise typer.Exit(code=1)
 
 
 @data_app.command("checkout")
@@ -615,6 +633,57 @@ def judge_calibrate(
         guard.record(rubric.version)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{split}.md").write_bytes(text.encode("utf-8"))
+
+
+@judge_app.command("score")
+def judge_score(
+    run_dirs: Annotated[list[Path], typer.Argument(help="Dev runs whose comments to judge.")],
+    config: ConfigOpt = Path("configs/judge/judge.yaml"),
+    rubric_path: Annotated[Path, typer.Option("--rubric")] = Path("configs/judge/rubric.yaml"),
+    out: Annotated[Path, typer.Option(help="Where the table is written.")] = Path(
+        "reports/judge/dev-systems.md"
+    ),
+) -> None:
+    """T5: score every triage comment of the given runs with the calibrated judge."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.judge import Judge, SystemScores, judge_run, render_system_scores
+    from triagelab.eval.report import load_run
+    from triagelab.labeling.gold import load_items
+    from triagelab.labeling.ratings import load_rubric
+
+    load_dotenv()
+    cfg = load_config(config)
+    rubric = load_rubric(rubric_path)
+    profile = load_profile(cfg.dataset.profile)
+    issues = {i.snapshot.issue_ref: i for i in load_items(cfg.dataset.data_dir, profile, ("dev",))}
+    run_dir, _ = create_run(
+        cfg,
+        runs_dir=cfg.paths.runs_dir,
+        command="judge score " + " ".join(d.name for d in run_dirs),
+        now=datetime.now(UTC),
+        git=git_info(Path.cwd()),
+        details={"split": "dev"},
+    )
+    client = wiring.build_llm_client(cfg, run_id=run_dir.name)
+    judge = Judge(client, cfg.llm, rubric, profile.repo)
+    rows: list[SystemScores] = []
+    for scored in run_dirs:
+        run_cfg, split, predictions = load_run(scored)
+        if split != "dev":  # the judge was calibrated on dev comments; test is not for this
+            raise typer.BadParameter(f"{scored.name} is a {split} run; only dev runs are judged")
+        latest = list({p.issue_ref: p for p in predictions}.values())
+        row = judge_run(
+            judge, rubric, run_cfg.name, scored.name, latest, issues,
+            workers=cfg.eval.concurrency, log=typer.echo,
+        )  # fmt: skip
+        rows.append(row)
+    write_cost(run_dir, client.stats)
+    table = render_system_scores(rows, rubric)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    heading = "# T5: triage comments of the final systems, judged (dev)"
+    out.write_bytes(f"{heading}\n\n{table}".encode())
+    _echo_report(table)
+    typer.echo(f"cost ${client.stats.cost_usd:.4f}; written to {out.as_posix()}")
 
 
 @app.command("gold-report")
@@ -1139,6 +1208,105 @@ def cascade(
     out.write_bytes(text.encode())
     _echo_report(text)
     typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def consistency(
+    spec_path: Annotated[Path, typer.Argument(help="Repeated runs to compare, per system.")],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+) -> None:
+    """pass^k and agreement across repeated runs of the same config (made with
+    `eval --sample N`). Offline. Writes <spec>-<labels>.md next to the spec."""
+    from triagelab.eval.consistency import ConsistencySpec, build_report
+
+    spec = ConsistencySpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(DEFAULT_CONFIG)
+    table = build_report(spec, cfg.paths.runs_dir, _labels(labels))
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(f"# {spec.title} ({labels} labels)\n\n{table}".encode())
+    _echo_report(table)
+    typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def demo(
+    run_dir: Annotated[Path, typer.Argument(help="A finished cascade run, e.g. runs/<run_id>.")],
+    issue_ref: Annotated[str, typer.Argument(help="One of its issues, e.g. python/cpython#1.")],
+    gif: Annotated[
+        Path | None, typer.Option(help="Also draw the steps as an animated GIF.")
+    ] = None,
+    seconds: Annotated[float, typer.Option(help="Length of the GIF.")] = 75.0,
+    markdown: Annotated[
+        Path | None, typer.Option(help="Also write the steps as a Markdown page (for the site).")
+    ] = None,
+    labels: Annotated[str, typer.Option(help="The reference shown last: silver | gold")] = "gold",
+) -> None:
+    """One issue's path through the cascade, step by step, from the run's stored traces.
+    Calls no model."""
+    import os
+
+    from triagelab.data.profile import load_profile
+    from triagelab.demo import render_gif, render_text, storyboard, total_ms
+    from triagelab.eval.dataset import load_split
+    from triagelab.eval.report import examples_for, load_run
+
+    cfg, split, _ = load_run(run_dir)
+    if cfg.system is None or cfg.system.cascade is None:
+        raise typer.BadParameter(f"{run_dir.as_posix()} is not a cascade run")
+    profile = load_profile(cfg.dataset.profile)
+    snapshots = {
+        e.snapshot.issue_ref: e.snapshot for e in load_split(cfg.dataset.data_dir, profile, split)
+    }
+    if issue_ref not in snapshots:
+        raise typer.BadParameter(f"{issue_ref} is not in this run's {split} split")
+    references = {e.snapshot.issue_ref: e.gold for e in examples_for(cfg, split, _labels(labels))}
+    steps = storyboard(
+        run_dir,
+        snapshots[issue_ref],
+        references.get(issue_ref),
+        profile.taxonomy.type,
+        max_tokens=load_config(cfg.system.cascade.cheap).llm.max_tokens,
+    )
+    _echo_report(render_text(steps))
+    if gif is not None:
+        render_gif(steps, gif, scale=seconds * 1000 / total_ms(steps))
+        typer.echo(f"written to {gif.as_posix()} ({len(steps)} frames, {seconds:.0f} s)")
+    if markdown is not None:
+        image = ""
+        if gif is not None:
+            relative = Path(os.path.relpath(gif, markdown.parent)).as_posix()
+            image = f"![The same steps as an animation]({relative})\n\n"
+        page = (
+            "# One issue through the cascade\n\n"
+            f"`{issue_ref}`, a dev-split issue, as the live cascade handled it. This page is "
+            "generated from the run's stored traces "
+            f'(`triagelab demo runs/{run_dir.name} "{issue_ref}"`), so it shows what happened, '
+            "including the steps that don't flatter the system.\n\n"
+            f"{image}```text\n{render_text(steps)}```\n"
+        )
+        markdown.parent.mkdir(parents=True, exist_ok=True)
+        markdown.write_bytes(page.encode("utf-8"))
+        typer.echo(f"written to {markdown.as_posix()}")
+
+
+site_app = typer.Typer(help="The static results site.", no_args_is_help=True)
+app.add_typer(site_app, name="site")
+
+
+@site_app.command("build")
+def site_build(
+    spec: Annotated[Path, typer.Option(help="Which reports go on which page.")] = Path(
+        "reports/site.yaml"
+    ),
+    out: Annotated[Path, typer.Option(help="Where the HTML is written (replaced).")] = Path("site"),
+) -> None:
+    """Build the results site from the committed reports. Needs no data and no model."""
+    from triagelab.site import build_site, load_spec
+
+    pages = build_site(load_spec(spec), Path(), out)
+    for page in pages:
+        typer.echo(page.as_posix())
+    typer.echo(f"{len(pages)} pages written to {out.as_posix()}/")
 
 
 session_app = typer.Typer(help="Frozen test-set evaluation sessions.", no_args_is_help=True)

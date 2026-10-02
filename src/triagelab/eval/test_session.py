@@ -81,19 +81,17 @@ def code_hash(root: Path) -> str:
 
 
 def deep_fingerprint(cfg: Config) -> str:
-    """The config's fingerprint, extended over the configs a routed system is built from."""
-    routed = cfg.system.routed if cfg.system else None
-    if routed is None:
+    """The config's fingerprint, extended over the configs a composed system (routed or
+    cascade) is built from."""
+    named: tuple[tuple[str, Path | None], ...] = ()
+    if cfg.system and cfg.system.routed:
+        routed = cfg.system.routed
+        named = (("base", routed.base), ("type", routed.type), ("component", routed.component))
+    elif cfg.system and cfg.system.cascade:
+        named = (("cheap", cfg.system.cascade.cheap), ("full", cfg.system.cascade.full))
+    parts = {role: deep_fingerprint(load_config(path)) for role, path in named if path is not None}
+    if not parts:
         return cfg.fingerprint()
-    parts = {
-        role: deep_fingerprint(load_config(path))
-        for role, path in (
-            ("base", routed.base),
-            ("type", routed.type),
-            ("component", routed.component),
-        )
-        if path is not None
-    }
     return stable_hash({"self": cfg.fingerprint(), "parts": parts})[:16]
 
 

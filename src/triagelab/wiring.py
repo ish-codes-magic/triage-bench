@@ -12,9 +12,12 @@ from triagelab.llm_client import CompletionBackend, LLMClient, ReplayOnlyBackend
 
 
 def build_llm_client(
-    cfg: Config, *, run_id: str, backend: CompletionBackend | None = None
+    cfg: Config, *, run_id: str, backend: CompletionBackend | None = None, sample: int = 0
 ) -> LLMClient:
-    """An `LLMClient` wired from config, with the all-time budget read from the ledger."""
+    """An `LLMClient` wired from config, with the all-time budget read from the ledger.
+
+    `sample` > 0 makes this a repeat run: same requests, separate cache entries.
+    """
     if backend is None and cfg.cache.replay_only:
         backend = ReplayOnlyBackend()
     if backend is None:
@@ -36,4 +39,5 @@ def build_llm_client(
         run_id=run_id,
         retry=cfg.retry,
         timeout_s=cfg.llm.timeout_s,
+        sample=sample,
     )

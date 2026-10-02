@@ -249,7 +249,11 @@ class LLMClient:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.perf_counter,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        sample: int = 0,
     ) -> None:
+        # Stamped on every request: a repeat of the same evaluation (consistency, §12.3)
+        # then gets its own cache entries and makes fresh model calls.
+        self._sample = sample
         self._backend = backend
         self._prices = prices
         self._guard = guard
@@ -266,6 +270,8 @@ class LLMClient:
         self.stats = CallStats()
 
     def complete(self, request: LLMRequest) -> LLMResponse:
+        if self._sample:
+            request = request.model_copy(update={"sample": self._sample})
         price = self._prices.price_for(request.price_key())  # unpriced: refuse before anything
         key = request.cache_key()
         started = self._clock()

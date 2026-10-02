@@ -110,7 +110,9 @@ class PathsConfig(_Strict):
     ledger_file: PortablePath = Path("runs/spend_ledger.jsonl")
 
 
-SystemKind = Literal["majority", "classifier", "llm_single_shot", "agent", "decisions", "routed"]
+SystemKind = Literal[
+    "majority", "classifier", "llm_single_shot", "agent", "decisions", "routed", "cascade"
+]
 
 
 class AgentBudgetConfig(_Strict):
@@ -185,6 +187,17 @@ class RoutedConfig(_Strict):
     component: PortablePath | None = None
 
 
+class CascadeConfig(_Strict):
+    """M9: the issue-level cascade, live (decisions/live_cascade.py). `cheap` triages every
+    issue; when its own confidence in the type label and the component is below `tau`,
+    `full` triages the issue instead. Both are experiment configs, as in `RoutedConfig`."""
+
+    cheap: PortablePath
+    full: PortablePath
+    # Chosen on dev only (reports/cascade/). 0 never escalates; above 1 always does.
+    tau: float = Field(ge=0.0, le=1.01)
+
+
 class SystemConfig(_Strict):
     """Which triage system an experiment evaluates, and its knobs."""
 
@@ -196,6 +209,7 @@ class SystemConfig(_Strict):
     agent: AgentConfig | None = None  # required when kind is "agent"
     decisions: DecisionsConfig | None = None  # required when kind is "decisions"
     routed: RoutedConfig | None = None  # required when kind is "routed"
+    cascade: CascadeConfig | None = None  # required when kind is "cascade"
     # Iteration 8: topic/OS labels below this confidence are dropped, by every LLM-based
     # system (triagelab/labels.py). 0 keeps everything.
     family_label_min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -225,6 +239,8 @@ class SystemConfig(_Strict):
             )
         if (self.kind == "routed") != (self.routed is not None):
             raise ValueError("system.routed is required for kind 'routed' and only allowed there")
+        if (self.kind == "cascade") != (self.cascade is not None):
+            raise ValueError("system.cascade is required for kind 'cascade' and only allowed there")
         return self
 
 

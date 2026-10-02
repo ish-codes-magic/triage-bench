@@ -76,6 +76,7 @@ def _run(
     session: Path | None = None,
     sessions_root: Path = Path(),
     resume_dir: Path | None = None,
+    sample: int = 0,
 ) -> RunOutcome:
     return run_eval(
         cfg,
@@ -87,6 +88,7 @@ def _run(
         session=session,
         sessions_root=sessions_root,
         resume_dir=resume_dir,
+        sample=sample,
     )
 
 
@@ -122,8 +124,8 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
     backend = FakeBackend(text=json.dumps(answer))
     real = wiring.build_llm_client
 
-    def build(cfg: Config, *, run_id: str) -> LLMClient:
-        return real(cfg, run_id=run_id, backend=backend)
+    def build(cfg: Config, *, run_id: str, sample: int = 0) -> LLMClient:
+        return real(cfg, run_id=run_id, backend=backend, sample=sample)
 
     monkeypatch.setattr(wiring, "build_llm_client", build)
     return backend
@@ -184,6 +186,33 @@ def test_a_later_partial_run_does_not_replace_a_full_one(workspace: Path) -> Non
     table = results_table(load_scored_runs(workspace / "runs"), "dev")
     assert full.run_id in table
     assert partial.run_id not in table
+
+
+def test_a_repeat_run_makes_fresh_calls_and_stays_out_of_the_table(
+    workspace: Path, fake_llm: FakeBackend
+) -> None:
+    cfg = _config(workspace, "llm_single_shot", name="e-llm")
+    first = _run(cfg)
+    calls = len(fake_llm.requests)
+    assert {r.sample for r in fake_llm.requests} == {0}
+    repeat = _run(cfg, sample=1)
+    assert {r.sample for r in fake_llm.requests[calls:]} == {1}
+    scored = {r.run_id: r for r in load_scored_runs(workspace / "runs")}
+    assert (scored[first.run_id].sample, scored[repeat.run_id].sample) == (0, 1)
+    table = results_table(list(scored.values()), "dev")
+    assert first.run_id in table
+    assert repeat.run_id not in table  # newer, but a repeat is not the experiment's result
+
+    # A resumed repeat keeps its sample index, whatever the caller passes.
+    before = len(fake_llm.requests)
+    (repeat.run_dir / "predictions.jsonl").write_bytes(b"")
+    _run(cfg, resume_dir=repeat.run_dir)
+    assert {r.sample for r in fake_llm.requests[before:]} == {1}
+
+
+def test_a_repeat_run_of_the_test_split_is_refused(workspace: Path) -> None:
+    with pytest.raises(TestSetLockedError, match="another look"):
+        _run(_config(workspace, "majority"), split="test", sample=1)
 
 
 def test_infrastructure_failures_are_retried_not_scored(

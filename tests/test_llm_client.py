@@ -46,8 +46,10 @@ def _client(
     per_run_usd: float = 1.0,
     cache: bool = True,
     prices: PriceTable = PRICES,
+    sample: int = 0,
 ) -> LLMClient:
     return LLMClient(
+        sample=sample,
         backend=backend,
         prices=prices,
         guard=BudgetGuard(per_run_usd=per_run_usd, total_usd=100.0, spent_before_run_usd=0.0),
@@ -106,6 +108,18 @@ def test_different_sample_index_is_a_different_cache_entry(tmp_path: Path) -> No
     client.complete(_request(sample=0))
     assert not client.complete(_request(sample=1)).cache_hit
     assert backend.calls == 2
+
+
+def test_a_repeat_run_client_makes_fresh_calls_and_caches_them_apart(tmp_path: Path) -> None:
+    first = FakeBackend()
+    _client(tmp_path, first).complete(_request())  # the original run fills the cache
+    repeat = FakeBackend()
+    client = _client(tmp_path, repeat, sample=2)
+    assert not client.complete(_request()).cache_hit  # same request, but a new sample
+    assert repeat.requests[0].sample == 2
+    assert client.complete(_request()).cache_hit  # the repeat is itself resumable
+    assert _client(tmp_path, FakeBackend()).complete(_request()).cache_hit  # original intact
+    assert repeat.calls == 1
 
 
 def test_budget_guard_blocks_before_the_provider_is_called(tmp_path: Path) -> None:

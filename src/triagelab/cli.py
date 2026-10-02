@@ -1159,6 +1159,24 @@ def cascade(
     typer.echo(f"written to {out.as_posix()}")
 
 
+@app.command()
+def consistency(
+    spec_path: Annotated[Path, typer.Argument(help="Repeated runs to compare, per system.")],
+    labels: Annotated[str, typer.Option(help="silver | gold (adjudicated issues only)")] = "gold",
+) -> None:
+    """pass^k and agreement across repeated runs of the same config (made with
+    `eval --sample N`). Offline. Writes <spec>-<labels>.md next to the spec."""
+    from triagelab.eval.consistency import ConsistencySpec, build_report
+
+    spec = ConsistencySpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    cfg = load_config(DEFAULT_CONFIG)
+    table = build_report(spec, cfg.paths.runs_dir, _labels(labels))
+    out = spec_path.with_name(f"{spec_path.stem}-{labels}.md")
+    out.write_bytes(f"# {spec.title} ({labels} labels)\n\n{table}".encode())
+    _echo_report(table)
+    typer.echo(f"written to {out.as_posix()}")
+
+
 session_app = typer.Typer(help="Frozen test-set evaluation sessions.", no_args_is_help=True)
 app.add_typer(session_app, name="test-session")
 

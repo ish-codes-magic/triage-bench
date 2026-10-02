@@ -3,16 +3,18 @@
 **An eval-driven GitHub issue-triage system.** A cheap, typed decision model handles routine calls. An LLM agent with MCP tools and repo-specific Agent Skills handles the hard ones. Every design choice is justified by measurement: accuracy with confidence intervals, calibration, cost and failure analysis.
 
 [![CI](https://github.com/ish-codes-magic/triage-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/ish-codes-magic/triage-bench/actions/workflows/ci.yml)
+[![MCP server](https://github.com/ish-codes-magic/triage-bench/actions/workflows/mcp.yml/badge.svg)](https://github.com/ish-codes-magic/triage-bench/actions/workflows/mcp.yml)
+[![Results site](https://github.com/ish-codes-magic/triage-bench/actions/workflows/pages.yml/badge.svg)](https://github.com/ish-codes-magic/triage-bench/actions/workflows/pages.yml)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
 ![pyright strict](https://img.shields.io/badge/types-pyright%20strict-informational)
 ![ruff](https://img.shields.io/badge/lint-ruff-informational)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Status: M0–M8 of 10 complete.** The held-out test set has been evaluated once, on two repositories. What remains (M9) is the report, the results site and the demo. Negative results are reported as prominently as positive ones.
+> **Status: complete (M0–M9).** The held-out test set was evaluated once, on two repositories. Negative results are reported as prominently as positive ones. Read next: the [technical report](reports/REPORT.md), the [test-set results](reports/test-eval/RESULTS.md), the [decision log](docs/DECISIONS.md) (53 records).
 
 ---
 
-## Headline results: the held-out test set (M8)
+## Headline results: the held-out test set
 
 **50 issues each from `python/cpython` and `astral-sh/uv`, evaluated once.** The configs, the code and the analysis plan were frozen in git before any test issue was scored, and the runs happened in an approval-protected CI workflow. Cells are point estimates with 95% bootstrap intervals, against adjudicated labels (made by a model annotator, not a human: ADR-0035).
 
@@ -34,6 +36,47 @@ The *routed system* is the final cheap configuration: two typed LLM decisions (t
 - **The perfect score was audited, not celebrated.** A leak audit of the runs' traces (6,478 past issues shown to the model, none from the future) and a breakdown by label show an easier sample, not a leak. With 50 of 50 correct, the honest claim is "above 0.94", and 0.91 [0.80, 0.98] against maintainers' own labels.
 
 Everything behind these numbers: [`reports/test-eval/RESULTS.md`](reports/test-eval/RESULTS.md) (all five systems, the planned paired comparisons, limits), [`ANALYSIS_PLAN.md`](reports/test-eval/ANALYSIS_PLAN.md) (written first), and the frozen session files next to them.
+
+### Reproduce in 3 commands
+
+```bash
+git clone https://github.com/ish-codes-magic/triage-bench && cd triage-bench
+uv sync
+uv run triagelab reproduce
+```
+
+No API key and no data collection. It downloads the two public dataset packs (about 50 MB), checks their pinned SHA-256, re-scores the committed predictions against the committed labels, and fails unless the committed test-set tables (the source of every number above) come out byte for byte. CI does the same on a fresh runner for every pull request. It reproduces the *scoring*: the model calls were made once, in CI, under a frozen session, and are not repeated.
+
+### Cost against accuracy
+
+Each point is a confidence threshold, from "the cheap tier answers everything" to "the full agent answers everything" (dev split). The cheap tier is already close to the agent, so the threshold chosen on dev escalates only a few issues.
+
+![cascade: accuracy and cost per 1,000 issues by threshold](reports/figures/e7-gold-cascade.png)
+
+### One issue, end to end
+
+A real dev issue through the live cascade, drawn from the run's stored traces (`triagelab demo`): the cheap tier runs out of output tokens and gives no answer, the gate escalates, and the full agent answers with tools.
+
+![one issue through the cascade](reports/figures/demo.gif)
+
+### More findings
+
+- **Typed decisions are consistent; agents are not.** Over three runs of the same config on dev, the routed system's type label was the same on 99% of issues. The full agent's accuracy is 0.77, but it is right in all three runs on 0.67. → [consistency](reports/consistency/dev-gold.md)
+- **Skills did nothing for a 9B model** (H1): repository skill vs. none, +0.008 [−0.030, +0.049]. It loads a skill on 1–2% of issues.
+- **Tools did not beat pasting context in** (H2): a tie on dev at one sixth of the cost, and on the CPython test set the tool-using agent is worse on labels (−0.076 [−0.144, −0.013]).
+- **Stated confidence is useless; log-probabilities are not** (H5): the model says 0.98 about everything, while first-token log-probabilities reach ECE 0.095.
+- **Triage comments are correct but not actionable.** A calibrated judge scores them 2.9–3.2 of 4 on correctness and 1.4–1.9 on actionability, and one plain model call writes better comments than the full agent. → [T5 scores](reports/judge/dev-systems.md)
+
+### Limitations
+
+- **Small samples:** dev 100, test 50 per repository. Most intervals are ±0.10 or wider, and several comparisons are inconclusive.
+- **The reference labels were adjudicated by a model**, not a person (ADR-0035). That may flatter LLM systems. A human spot-check was recommended and not done.
+- **One small model family** (Qwen3.5-9B; 27B for one comparison). The skills result in particular may not hold for larger models.
+- **Needs-info (T4) is not measured on CPython:** its label turned out to mean something else (ADR-0036).
+- **Latency** was measured once per system, on shared providers.
+- **Jev was not available**, so the typed decision layer uses an LLM and a classifier.
+
+More in the [report](reports/REPORT.md#11-limitations-and-threats-to-validity).
 
 ---
 
@@ -289,7 +332,7 @@ The process was the one designed for a human:
   - dev 100 / test 50, split by time and stratified so rare cases (2.6% are duplicates) are present.
   - Sampling weights let every metric also be reported at natural rates.
 
-## Engineering highlights (built so far)
+## Engineering highlights
 
 - **A budget hard stop that can't be overshot.**
   - Before every call, the worst-case cost (`max_tokens` at the output rate, plus a provable byte-based ceiling on prompt tokens) is checked against both the per-run and all-time caps.
@@ -347,6 +390,13 @@ The process was the one designed for a human:
     - the CLI refuses anything outside the session, any change since the freeze, a second run of a config and a third session; the workflow adds the owner's approval;
     - it failed safe the first time: a platform-dependent file order in the hash made CI refuse the run before scoring anything. Now a test checks every pending session on Linux and Windows. → [ADR-0046](docs/DECISIONS.md#adr-0046-the-test-split-is-evaluated-through-frozen-sessions-in-ci-from-a-test-pack)
 - **Leak audits of finished runs.** `triagelab runs audit` re-derives from a run's traces what the model was allowed to see, and fails on any past issue that is the issue itself, newer than it, or shown with later labels. → [ADR-0048](docs/DECISIONS.md#adr-0048-finished-runs-are-audited-for-leaks-from-their-traces)
+- **Reproducibility as a CI check.** `triagelab reproduce` rebuilds the headline tables from the public pack, the committed predictions and the committed labels, and a job runs it on a fresh runner for every pull request. A change that moves a headline number fails until the tables are regenerated and reviewed. → [ADR-0051](docs/DECISIONS.md#adr-0051-reproduce-means-re-scoring-the-committed-predictions)
+- **Consistency, measured.** `eval --sample N` repeats a run with fresh model calls (the sample index has been part of the cache key since the first milestone), and `triagelab consistency` reports accuracy, pass^k, "ever right" and "unanimous" with intervals. → [ADR-0049](docs/DECISIONS.md#adr-0049-consistency-is-measured-by-repeating-a-run-with-a-sample-index)
+- **The cascade, offline and live.** Thresholds are chosen offline by recombining stored runs; the live triager (`system.kind: cascade`) applies them one issue at a time, and on dev it reproduces the offline result on all 100 issues. The demo GIF is drawn from its traces, not recorded. → [ADR-0052](docs/DECISIONS.md#adr-0052-the-cascade-also-exists-live-and-the-demo-is-rendered-from-its-traces)
+- **Release and site, opt-in.**
+  - `release.yml` builds the package and the `repo-intel` image on a tag, checks that both start, and attaches build provenance. PyPI (trusted publishing, no stored token) and GHCR are each switched on by a repository variable; until then a tag is a full dry run.
+  - `pages.yml` builds the [results site](reports/site.yaml) from the committed reports on every change, so a broken link fails a pull request; publishing is a variable too.
+  - The server and the skills have their own READMEs: [`repo-intel`](src/triagelab/mcp_server/README.md), [skills](skills/README.md).
 - **Verify, don't remember.** Before any code, every external API was checked against current docs, and several contradicted older assumptions. → [M0 learning note](docs/learning/M0-foundations.md)
 
 ## Roadmap
@@ -360,7 +410,9 @@ The process was the one designed for a human:
 - [x] **M6 Iteration loop + LLM regression gate in CI:** iterations 6–8, ablations E2–E5, `eval.yml`
 - [x] **M7 Decision layer:** LLM (verbalized, logprobs) and classifier backends, calibration, cascade (Jev: no access)
 - [x] **M8 Transfer repo + one-time test-set evaluation:** `astral-sh/uv` with a new profile and skill, frozen test sessions, `test-eval.yml`, leak audit
-- [ ] **M9 Report, results site, demo**
+- [x] **M9 Presentation:** technical report, results site, demo, consistency study, T5 scores, `reproduce`, release and Pages workflows
+
+Not done, by decision or for lack of access: Jev as a decision backend (no access), a human spot-check of the model-adjudicated labels, a second test session, and the stretch goals (shadow mode, an SDK comparison, fine-tuning, the prompt-injection set).
 
 ## Quickstart
 
@@ -378,7 +430,7 @@ uv run triagelab runs list       # run registry and all-time spend vs. budget
 uv run triagelab data collect -p configs/repos/python__cpython.yaml
 uv run triagelab data build   -p configs/repos/python__cpython.yaml
 
-# Evaluate (dev split; the test split needs --allow-test and is capped at two runs)
+# Evaluate (dev split; the test split runs only through a frozen session, in CI)
 uv run triagelab eval -c configs/experiments/e1-classifier.yaml --split dev
 uv run triagelab compare runs/<run_a> runs/<run_b>   # paired-bootstrap deltas
 uv run triagelab results --split dev                 # reports/results/dev.md
@@ -396,6 +448,17 @@ uv run triagelab eval -c configs/experiments/agent.yaml --split dev
 uv run triagelab runs stats runs/<run_id>          # tools, skills, budgets, cost per issue
 PHOENIX_WORKING_DIR=.phoenix uvx --from arize-phoenix==20.16.0 phoenix serve   # trace viewer
 bash scripts/phoenix_check.sh 3                    # re-send 3 issues' traces (free from cache)
+
+# Reports, each regenerated from recorded runs
+uv run triagelab deltas reports/experiments/m6-ablations.yaml      # declared paired comparisons
+uv run triagelab calibration reports/calibration/e6.yaml           # reliability, ECE, risk-coverage
+uv run triagelab cascade reports/cascade/e7.yaml                   # cascade curves and thresholds
+uv run triagelab eval -c configs/experiments/routed.yaml --split dev --sample 1   # a repeat run
+uv run triagelab consistency reports/consistency/dev.yaml          # pass^k across repeats
+uv run triagelab judge score runs/<run_id>                         # T5: rubric scores of comments
+uv run triagelab runs audit runs/<run_id>                          # leak audit from traces
+uv run triagelab demo runs/<cascade_run> "python/cpython#151987" --gif demo.gif
+uv run triagelab site build                                        # the results site, in ./site
 ```
 
 Development:
@@ -410,18 +473,24 @@ uv run pytest
 ```
 configs/            base.yaml, prices.yaml (verified, cited), experiments/ (one YAML per ablation)
 configs/repos/      per-repo ground-truth rules (taxonomy, component map, windows)
-src/triagelab/      config · cost · cache · ledger · retry · llm_client · litellm_backend · wiring · cli
-  data/             GitHub collector · creation-time snapshots · ground truth · splits · report
-  eval/             runner · metrics · bootstrap · report · run registry
+src/triagelab/      config · cost · cache · ledger · retry · llm_client · litellm_backend · wiring · cli · demo · site
+  data/             GitHub collector · creation-time snapshots · ground truth · splits · dataset packs
+  eval/             runner · metrics · bootstrap · calibration · consistency · judge · gate · test sessions
+                    · leak audit · reproduce · reports · run registry
   baselines/        majority · TF-IDF + logistic regression · single-shot LLM
   retrieval/        time-aware corpus · own BM25 · dense index · RRF · embedding store · benchmark
-  mcp_server/       repo-intel: five read-only tools, as_of guard, code search, CODEOWNERS
-  harness/          agent loop · tools · MCP client · budgets · compaction · tracing · agent
+  mcp_server/       repo-intel: five read-only tools, as_of guard, code search, CODEOWNERS (own README)
+  harness/          agent loop · tools · MCP client · budgets · compaction · tracing · planner
   skills/           Agent Skills loader (progressive disclosure)
-skills/             the skills themselves: triage-cpython (+ references/), generic-triage
-data/DATASET_CARD.md, reports/  dataset card, generated data/results/retrieval/agent reports
-docs/               DECISIONS.md (ADRs) · learning/ (one note per milestone)
-.github/            CI + path-filtered MCP workflows, composite setup action, Dependabot
+  decisions/        typed decision backends · routed system · cascade (offline and live)
+  labeling/         labeling app · gold labels · comment ratings · batch annotation
+skills/             triage-cpython, triage-uv, triage-cpython-auto, generic-triage (own README)
+data/               DATASET_CARD.md and gold/ (adjudicated labels); everything else is rebuilt or downloaded
+reports/            REPORT.md · test-eval/ (frozen sessions, plan, results, records) · results/ ·
+                    experiments/ · calibration/ · cascade/ · consistency/ · judge/ · figures/ · site/
+docs/               DECISIONS.md (53 ADRs) · ITERATIONS.md · FAILURE_TAXONOMY.md · learning/ · blog-draft.md
+.github/            ci · mcp · eval (regression gate) · test-eval · release · pages; setup action; Dependabot
+Dockerfile          the repo-intel image
 scripts/            MCP Inspector check (layer 3 of the server tests), Phoenix trace check
 tests/              unit and integration tests, offline by default; cassettes/ (recorded model responses)
 ```

@@ -1,0 +1,11 @@
+# M8 test-set comparisons, declared in reports/test-eval/ANALYSIS_PLAN.md before the runs.
+# Regenerate with: triagelab deltas <this file>
+title: "M8 (E8): astral-sh/uv, test split (n = 50), session 1"
+reference: 20261002-055359-uv-routed-960e05
+metrics: [t1_micro_f1, t1_type_micro_f1, t1_area_micro_f1, t2_link_f1, t3_accuracy, t3_top3_accuracy]
+comparisons:
+  - {name: "1. routed vs full agent (H3, E7)", a: 20261002-063047-uv-agent-63270f, b: reference}
+  - {name: "2. routed vs stuffed agent", a: 20261002-065402-uv-stuffed-cd92c1, b: reference}
+  - {name: "3. routed vs TF-IDF classifier (E1)", a: 20261002-065415-uv-classifier-d51e13, b: reference}
+  - {name: "4. routed vs single-shot LLM (E1)", a: 20261002-065430-uv-llm-single-shot-45059a, b: reference}
+  - {name: "5. full agent vs stuffed agent (H2, E3)", a: 20261002-065402-uv-stuffed-cd92c1, b: 20261002-063047-uv-agent-63270f}

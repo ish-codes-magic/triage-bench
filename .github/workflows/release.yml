@@ -1,0 +1,147 @@
+name: Release
+
+# On a version tag (v*): build the package and the repo-intel image, attach build
+# provenance to both, and, where the owner has switched it on, publish them.
+#
+# Publishing is outward-facing (AGENTS.md §12.8), so each destination is opt-in:
+#   PyPI   Settings -> Variables: PYPI_ENABLED = true, a `pypi` environment, and a trusted
+#          publisher for this workflow on pypi.org (no token is stored anywhere)
+#   GHCR   Settings -> Variables: GHCR_ENABLED = true
+# Without them a tag still builds, verifies and attests everything, and publishes nothing.
+#
+# A pull request that touches the packaging builds the wheel and the image too (no
+# attestation, no publishing), so a broken Dockerfile is caught before a tag exists.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/repo-intel
+
+jobs:
+  package:
+    name: Build the package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # sign the provenance attestation
+      attestations: write # store it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-env
+      - name: Build the sdist and the wheel
+        run: uv build
+      - name: The wheel installs and both entry points start
+        run: |
+          uv venv "$RUNNER_TEMP/check"
+          uv pip install --python "$RUNNER_TEMP/check" dist/*.whl
+          "$RUNNER_TEMP/check/bin/triagelab" --help > /dev/null
+          "$RUNNER_TEMP/check/bin/repo-intel" --help > /dev/null
+      - name: The tag matches the package version
+        if: github.event_name == 'push'
+        run: |
+          version=$(uv version --short)
+          test "v$version" = "$GITHUB_REF_NAME" || {
+            echo "::error::tag $GITHUB_REF_NAME does not match the package version $version"
+            exit 1
+          }
+      - name: Attest build provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30
+
+  pypi:
+    name: Publish to PyPI
+    if: github.event_name == 'push' && vars.PYPI_ENABLED == 'true'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/triagelab/
+    permissions:
+      id-token: write # trusted publishing: PyPI verifies this workflow, no API token
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  image:
+    name: Build the repo-intel image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to GHCR (only used when publishing is on)
+      id-token: write
+      attestations: write
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && vars.GHCR_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: ${{ env.PUBLISH == 'true' }}
+          load: ${{ env.PUBLISH != 'true' }} # keep it locally to smoke-test it
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: The image starts and prints its usage
+        if: env.PUBLISH != 'true'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: docker run --rm "$(echo "$TAGS" | head -n 1)" --help
+      - name: Attest the image's provenance
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

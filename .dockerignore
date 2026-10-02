@@ -1,0 +1,8 @@
+# The image is built from the package and the repository profiles only.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/**
+!configs/repos/**
+**/__pycache__

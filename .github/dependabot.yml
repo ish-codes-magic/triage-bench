@@ -18,3 +18,9 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
+
+  # The base images of the repo-intel image (Dockerfile).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

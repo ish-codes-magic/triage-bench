@@ -921,3 +921,146 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
 **Consequences.**
 - Every cascade number is reproducible from the run registry (`triagelab cascade reports/cascade/e7.yaml`).
 - The decision-level result (a $0.15-per-1,000 call matching the agent on type and component) is the strongest evidence for H3. Whether to *deploy* decisions that way, with the agent kept for labels, duplicates and the comment, is a design question for M8/M9.
+
+## ADR-0044: Code search uses the built-in scanner; ripgrep is opt-in
+
+**Context.**
+- ADR-0019's code search used ripgrep "when installed", with a pure-Python fallback.
+- The development machine has no ripgrep, so every recorded run, including the regression gate's baseline, used the fallback.
+- The two differ in more than speed: ripgrep skips hidden files and anything matched by `.gitignore`.
+- A CI runner with `rg` on its PATH would therefore have searched differently from the baseline it's compared with. This was found while preparing the gate's first CI run.
+
+**Decision.**
+- `CodeSearcher` uses the built-in scanner unless `use_ripgrep=True` is passed explicitly. An installed `rg` is never picked up on its own.
+- Evaluation always uses the scanner (1–5 s per query on the 140 MB tree, which is acceptable).
+
+**Consequences.**
+- Tool results are the same on every machine, so a CI candidate and a local baseline differ only by what the PR changed (and model sampling).
+- General rule recorded for the project: an evaluation's behaviour must not depend on which optional tools happen to be installed.
+
+## ADR-0045: The transfer repo is astral-sh/uv, with a label-provenance caveat
+
+**Context.**
+- ADR-0011 chose uv tentatively and required the same label-provenance scan before M8.
+- The scan (2026-10-01, 281 eval-window issues):
+  - **T1:** 188 of 261 taxonomy labels were applied by the issue's author (uv's issue forms attach `bug`, `enhancement` or `question`); 72 by triagers. A maintainer triaged 26–32% of issues (CPython: 70%). `area:*` labels are sparse.
+  - The form doesn't fully decide the type: `bug` and `enhancement` share one form, and on train 277 form-filed issues were relabelled `question` by maintainers.
+  - **T2:** 85 structured duplicate closures. **T3:** fixing PRs link natively (about 20% of issues). **T4:** `needs-mre` (5%) is a real needs-information label, which CPython's `pending` wasn't (ADR-0036).
+- The owner decided to keep uv, with the caveats recorded (2026-10-01).
+
+**Decision.**
+- **Profile** (`configs/repos/astral-sh__uv.yaml`): written from the label list and the directory layout at the freeze commit only.
+  - type = bug, enhancement, question, documentation;
+  - family = `area:*`;
+  - 11 components by functional group of crates.
+- **Windows:** the same as the primary repo.
+- **uv's dev split** is built but never evaluated or tuned on. Transfer means swapping the profile and the skill, and nothing else (E8, H4).
+- **Reporting:**
+  - headline transfer numbers use the adjudicated test labels;
+  - type labels are also reported on the maintainer-triaged subset;
+  - the provenance numbers go in the dataset card.
+
+**Consequences.**
+- Silver T1 on uv partly measures "which form did the author pick". It's a lower bound on label quality, not a triage ground truth.
+- uv gives the project its first valid T4 evaluation.
+
+## ADR-0046: The test split is evaluated through frozen sessions, in CI, from a test pack
+
+**Context.**
+- §7.4: the test split is evaluated at most twice in the whole project. §12.8: a manual, approval-protected workflow records each run and refuses a third.
+- The M2 guard counted *runs* (limit 2), but the final evaluation covers several configs.
+- A counter also freezes nothing: prompts and post-processing live in code, so a config fingerprint alone lets a prompt change through.
+- The owner chose to run the evaluation in CI and to publish a test pack for it (2026-10-01).
+
+**Decision.**
+- **Session** (`eval/test_session.py`): a file committed before any test issue is scored (`reports/test-eval/<slug>/session-N.yaml`). It holds:
+  - each config's path, name and fingerprint (extended over a routed system's parts);
+  - a hash of `src/triagelab`, `skills` and `configs`, with line endings normalised so Windows and Linux agree;
+  - the dataset hash.
+- **A test run is refused** unless:
+  - its config is in the session;
+  - the config, the code and the dataset are unchanged since the freeze;
+  - the run covers the whole split;
+  - that config has no completed run in the session;
+  - the repository has at most two sessions.
+
+  Every start and completion is appended to an audit log, which is committed with the results.
+- **Test pack:** `gate pack --with-test` builds a pack with every split and the full retrieval history. It's published only when a session is frozen. Only `test-eval.yml` unpacks it (`--allow-test`); the regression gate's unpack still refuses it.
+- **Workflow (`test-eval.yml`):**
+  - manual dispatch only, in the approval-protected `eval` environment;
+  - refuses a session that already succeeded in this workflow;
+  - runs `triagelab test-session run`;
+  - uploads the runs and the audit log for 90 days.
+
+  Gold scoring happens afterwards, offline, from the stored predictions.
+- **Frozen for session 1** (owner, 2026-10-01): the routed system (headline), the full agent, the stuffed agent, the TF-IDF classifier and the single-shot LLM.
+
+**Consequences.**
+- "Evaluated once" is enforced by code and by the workflow, not by convention, and the freeze covers prompts as well as configs.
+- After publication the test issues and their silver labels are public. That's acceptable only because every decision is frozen first.
+- A session pins the exact code: the evaluation has to run before any further change to `src`, `skills` or `configs`.
+
+**As run (2026-10-02).**
+- Session 1 of both repositories was frozen in commit `682f46a` on one code hash (`6de34cd0…`), five configs each.
+- The packs were published only after that commit was pushed: releases `testpack-python__cpython-v1` and `testpack-astral-sh__uv-v1`, both targeting the freeze commit, each with its SHA-256 in the release notes.
+- GitHub dispatches only workflows that exist on the default branch, so `test-eval.yml` reached `main` through its own small PR (#8) and is dispatched against the M8 branch, where the session files live.
+- Freezing through the real command found a bug the unit tests had missed (two `--config` options on `test-session freeze`). It was fixed before the freeze, and the command now has a test that goes through the CLI.
+
+**Correction: session 1 was re-frozen once, before anything was scored (2026-10-02).**
+- **What happened:** the first CPython run (36947286684) was refused in CI at the first config, with "The code, skills or configs changed after the session was frozen". Nothing had changed: `git diff 682f46a -- src skills configs` was empty.
+- **Cause:** `code_hash` sorted `Path` objects. They compare case-insensitively on Windows and case-sensitively on Linux, so `SKILL.md` and `references/` hashed in a different order on the machine that froze the session and the one that ran it. The existing test covered line endings but not file order.
+- **Nothing was evaluated:** the run stopped at authorization, wrote no run and no audit line, and uploaded no artifact. The queued uv run was cancelled before it started.
+- **Fix:** files are sorted by their path parts as plain strings. Two tests were added:
+  - a hand-computed digest that pins the order;
+  - a check that every committed session that hasn't run yet matches the checkout (code hash and every config fingerprint). CI runs it on Linux and Windows, so a freeze is verified on both before a run is requested.
+- **Re-freeze:** session 1 of both repositories was frozen again in place with the same configs. The session files differ from the first freeze only in `created_at`, `code_hash` and the note; all ten config fingerprints and both dataset hashes are unchanged. Since the first freeze, the frozen trees differ only in that one function.
+- **Why not session 2:** the limit of two sessions counts evaluations of the test split, and none took place. Opening session 2 would have spent the project's one spare evaluation on a tooling bug.
+
+## ADR-0047: Repository-specific prompt wording lives in the profile
+
+**Context.**
+- A smoke run of the uv configs on 12 **train** issues (never dev or test) showed that 20% of model calls ran into the 4,000-token output limit and 2 of 12 issues ended as fallbacks. On CPython dev the rate is 0.3%.
+- The shared prompt still carried CPython wording from iteration 1:
+  - "area labels have no prefix (write `stdlib`, never `area-stdlib`)", while uv's area labels are literally `area:windows`;
+  - headings that put uv's `performance`/`compatibility` under "Area labels" and its `area:` labels under "Topic and OS labels";
+  - the single-shot prompt's "one type-* label".
+- H4 says a new repository needs only a new skill and profile. A repo rule hard-coded in the harness contradicts that.
+
+**Decision.**
+- `RepoProfile.wording` (`PromptWording`) holds the label note, the two headings and the single-shot phrase, with neutral defaults.
+- CPython's profile states the exact words that used to be hard-coded, so its prompts are byte-identical (cache, cassettes and results unchanged; a test pins the text).
+- uv's profile states its own wording.
+- Nothing else in the harness changed.
+
+**Consequences.**
+- On the same 12 train issues, with the uv wording:
+  - calls at the output limit fell from 7 of 35 to 3 of 33;
+  - fallbacks fell from 2 to 0;
+  - median latency fell from 100 s to 34 s.
+- The remaining loops are the 9B model's own indecision (question vs. documentation; wanting to verify code it has no tool for). The harness bounds them (output cap, then a nudge), and the rate is reported as a transfer finding.
+- This is a correction to the transfer claim: the harness was not repo-neutral until this change. It was found before any uv dev or test issue was evaluated.
+
+**Correction (2026-10-02, after the test runs): the effect on runaway reasoning is not established.**
+- The Context above compares the wrong things: 20% is the **stuffed** agent on uv, and 0.3% is the **full** agent on CPython dev.
+- Like for like, the stuffed agent hits the output limit about as often on both repositories: 12.9% of calls on CPython dev (27 of 209), 14.4% on CPython test (15 of 104) and 14.4% on uv test (22 of 153). The full agent is at 0.3–1.4% on both.
+- So runaway reasoning is a property of the stuffed configuration (mostly its second call), not of the transfer, and "7 of 35 → 3 of 33" on 12 issues is within the noise of a 13–14% base rate.
+- The change itself stands: a prompt that tells uv "area labels have no prefix" contradicts uv's own labels, and repository rules belong in the profile. What is withdrawn is the claim that it reduced runaway reasoning, and the plan's "transfer finding" about it.
+
+## ADR-0048: Finished runs are audited for leaks from their traces
+
+**Context.**
+- On CPython test the routed system matched gold on all 50 type labels (dev: 0.87). A perfect score is more often a leak than a result.
+- The `as_of` guard was tested where it is enforced (corpus, MCP server), but nothing checked what a *finished run* had actually shown the model. The test runs were made in CI from a published pack, so "it worked on my machine" proved nothing about them.
+
+**Decision.**
+- `eval/context_audit.py` reads a run's traces and collects every past issue that reached the model: rows of the stuffed agent's `<similar_issues>` block, and results of `search_similar_issues` and `get_issue`.
+- Each one is checked against the corpus as of the triaged issue's creation time: it must not be that issue, must be older, and must show the labels it had then.
+- `triagelab runs audit <run>...` prints one line per run and exits non-zero on any leak.
+- Alternatives not taken:
+  - re-running the issues with extra logging: costs money, and can't cover runs made elsewhere;
+  - trusting the unit tests alone: they test the guard, not that every code path goes through it.
+
+**Consequences.**
+- The six test runs that use retrieval are clean: 6,478 past issues, none the issue itself, none newer, none with later labels (`reports/test-eval/context-audit.md`).
+- The 1.00 is reported as an easier sample, with the audit as evidence (`reports/test-eval/RESULTS.md`, section 5).
+- Limits: a tool result truncated in the trace loses its labels (7 of 6,478; counted, not checked), and code search is outside the audit because the checkout is frozen before the data window.

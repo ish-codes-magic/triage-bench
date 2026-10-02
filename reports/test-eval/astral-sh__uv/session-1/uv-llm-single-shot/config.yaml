@@ -1,0 +1,47 @@
+name: uv-llm-single-shot
+budget:
+  usd_total: 150.0
+  usd_per_run: 5.0
+llm:
+  model: openrouter/qwen/qwen3.5-9b
+  route:
+    provider: deepinfra
+    quantization: bf16
+  reasoning: default
+  temperature: 0.0
+  seed: null
+  max_tokens: 8000
+  timeout_s: 60.0
+  named_tool_choice: true
+retry:
+  max_attempts: 4
+  base_delay_s: 1.0
+  max_delay_s: 30.0
+cache:
+  enabled: true
+  dir: .cache/llm
+  replay_only: false
+paths:
+  runs_dir: runs
+  prices_file: configs/prices.yaml
+  ledger_file: runs/spend_ledger.jsonl
+dataset:
+  profile: configs/repos/astral-sh__uv.yaml
+  data_dir: data
+  reports_dir: reports
+eval:
+  concurrency: 4
+  bootstrap_resamples: 1000
+  seed: 0
+  subset: null
+system:
+  kind: llm_single_shot
+  max_body_chars: 12000
+  min_label_count: 10
+  agent: null
+  decisions: null
+  routed: null
+  family_label_min_confidence: 0.95
+tracing:
+  otlp_endpoint: null
+  project: triagelab

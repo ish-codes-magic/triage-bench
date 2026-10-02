@@ -1,0 +1,8 @@
+# E8 (transfer, H4): the routed system on astral-sh/uv. The decision backends are the
+# same configs as on CPython (their questions and options come from the profile).
+extends: ../routed.yaml
+name: uv-routed
+dataset: {profile: configs/repos/astral-sh__uv.yaml}
+system:
+  routed:
+    base: configs/experiments/uv/e3-stuffed.yaml

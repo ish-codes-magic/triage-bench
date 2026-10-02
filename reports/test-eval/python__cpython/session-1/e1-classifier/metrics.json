@@ -1,0 +1,118 @@
+{
+  "split": "test",
+  "config": "e1-classifier",
+  "metrics": {
+    "t1_micro_f1": {
+      "point": 0.7123287671232877,
+      "low": 0.6081054054054054,
+      "high": 0.8120323536113009,
+      "weighted": 0.6927068044696635
+    },
+    "t1_macro_f1": {
+      "point": 0.500082760376878,
+      "low": 0.3871913952061011,
+      "high": 0.6558770251686461,
+      "weighted": 0.48876789815657207
+    },
+    "t1_type_micro_f1": {
+      "point": 0.7796610169491525,
+      "low": 0.64,
+      "high": 0.9090909090909091,
+      "weighted": 0.7233565588675855
+    },
+    "t1_area_micro_f1": {
+      "point": 0.696969696969697,
+      "low": 0.5454545454545454,
+      "high": 0.840186440677966,
+      "weighted": 0.7465684708467146
+    },
+    "t2_link_f1": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t2_link_precision": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t2_link_recall": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t2_detect_f1": {
+      "point": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "weighted": 0.0
+    },
+    "t3_accuracy": {
+      "point": 0.6521739130434783,
+      "low": 0.45454545454545453,
+      "high": 0.85,
+      "weighted": 0.6691919191919192
+    },
+    "t3_top3_accuracy": {
+      "point": 0.9130434782608695,
+      "low": 0.7857142857142857,
+      "high": 1.0,
+      "weighted": 0.9107744107744109
+    },
+    "t4_f1": {
+      "point": 0.12500000000000003,
+      "low": 0.0,
+      "high": 0.3751488095238094,
+      "weighted": 0.06666829590165939
+    },
+    "t4_precision": {
+      "point": 0.2,
+      "low": 0.0,
+      "high": 0.6666666666666666,
+      "weighted": 0.05115703409218768
+    },
+    "t4_recall": {
+      "point": 0.09090909090909091,
+      "low": 0.0,
+      "high": 0.3076923076923077,
+      "weighted": 0.09567901234567902
+    }
+  },
+  "system": {
+    "issues": 50,
+    "errors": 0,
+    "cost_usd_total": 0.0,
+    "cost_usd_per_issue": 0.0,
+    "latency_ms_p50": 78.5,
+    "latency_ms_p95": 137.64999999999998,
+    "tokens_in_per_issue": 0.0,
+    "tokens_out_per_issue": 0.0
+  },
+  "per_label_f1": {
+    "OS-mac": 0.0,
+    "OS-unsupported": 0.0,
+    "OS-windows": 1.0,
+    "build": 0.6666666666666666,
+    "docs": 0.6666666666666666,
+    "extension-modules": 0.5714285714285715,
+    "interpreter-core": 0.75,
+    "performance": 0.4,
+    "stdlib": 0.8,
+    "tests": 0.0,
+    "topic-SSL": 0.0,
+    "topic-asyncio": 1.0,
+    "topic-email": 1.0,
+    "topic-free-threading": 0.0,
+    "topic-installation": 0.0,
+    "topic-multiprocessing": 1.0,
+    "topic-parser": 1.0,
+    "topic-socket": 0.0,
+    "topic-unicode": 0.0,
+    "type-bug": 0.823529411764706,
+    "type-crash": 0.5,
+    "type-feature": 0.8235294117647058
+  }
+}

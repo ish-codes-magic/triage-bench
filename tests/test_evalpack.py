@@ -106,3 +106,18 @@ def test_an_unexpected_index_file_is_refused(workspace: Path) -> None:  # noqa: 
     (index_dir(data, PROFILE) / "notes.txt").write_text("anything", encoding="utf-8")
     with pytest.raises(PackError, match="unexpected file"):
         build_pack(data, PROFILE, workspace / "pack.tar.gz")
+
+
+def test_a_test_pack_is_explicit_at_both_ends(workspace: Path) -> None:  # noqa: F811
+    data = workspace / "data"
+    _with_index(data, PROFILE)
+    manifest = build_pack(data, PROFILE, workspace / "test.tar.gz", include_test=True)
+    assert "test" in manifest.splits
+    assert manifest.history_cutoff is None
+    # The gate's unpack refuses it; only the test-eval path accepts it.
+    with pytest.raises(PackError, match="test-split"):
+        extract_pack(workspace / "test.tar.gz", workspace / "gate", PROFILE)
+    out = workspace / "testeval"
+    extract_pack(workspace / "test.tar.gz", out, PROFILE, allow_test=True)
+    assert len(load_split(out, PROFILE, "test")) == len(load_split(data, PROFILE, "test"))
+    assert _late(corpus_path(out, PROFILE), PROFILE) > 0

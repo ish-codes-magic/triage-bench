@@ -8,7 +8,32 @@
 ![ruff](https://img.shields.io/badge/lint-ruff-informational)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Status: M0–M2 of 10 complete** (foundations, dataset, baselines and scoring). Results so far are on the dev split with silver labels; the test set stays locked until M8. Negative results are reported as prominently as positive ones.
+> **Status: M0–M8 of 10 complete.** The held-out test set has been evaluated once, on two repositories. What remains (M9) is the report, the results site and the demo. Negative results are reported as prominently as positive ones.
+
+---
+
+## Headline results: the held-out test set (M8)
+
+**50 issues each from `python/cpython` and `astral-sh/uv`, evaluated once.** The configs, the code and the analysis plan were frozen in git before any test issue was scored, and the runs happened in an approval-protected CI workflow. Cells are point estimates with 95% bootstrap intervals, against adjudicated labels (made by a model annotator, not a human: ADR-0035).
+
+| | CPython: routed system | CPython: full agent | uv: routed system | uv: full agent |
+|---|---|---|---|---|
+| Labels (T1), micro-F1 | 0.88 [0.83, 0.92] | 0.80 [0.72, 0.87] | 0.70 [0.60, 0.79] | 0.75 [0.65, 0.85] |
+| Type label | 1.00 (50 of 50) | 0.88 [0.79, 0.96] | 0.78 [0.66, 0.88] | 0.77 [0.65, 0.88] |
+| Component (T3), accuracy | 0.73 [0.60, 0.84] | 0.81 [0.69, 0.92] | 0.56 [0.40, 0.71] | 0.68 [0.53, 0.82] |
+| Cost per 1,000 issues | $1.36 | $6.50 | $1.84 | $10.15 |
+| p50 latency | 170 s | 107 s | 202 s | 148 s |
+
+The *routed system* is the final cheap configuration: two typed LLM decisions (type label, component) on top of an agent that gets similar past issues pasted in instead of tools. `uv` is the transfer repository: same harness, only the repository profile and the skill swapped.
+
+- **The cheap system holds up on labels, at a fifth of the cost** (CPython). It beats the full agent by +0.08 [+0.02, +0.15] micro-F1, and both baselines by more.
+- **Negative: its component routing did not hold up.** The typed component backend equalled the agent on dev (0.84). On test it changed the base agent's answer on 7 issues and broke 5 of them. That is the one number that fell below its dev interval, and it is the one decision that was *chosen* on dev.
+- **Negative: cheaper is not faster.** The routed system was slower than the full agent on both repositories, because its base agent runs into the output limit on 14% of its calls.
+- **Negative: the choice of system does not transfer.** On uv the full agent leads, and the routed system is no better than a single model call. The harness itself transferred after one fix: a piece of CPython wording had been hard-coded in the shared prompt.
+- **Where it fails on uv:** maintainers there mostly step in to re-label reports as questions. The LLM systems get the type right on 31–32 of the 34 issues nobody re-labelled, and on 5–7 of the 16 a maintainer triaged.
+- **The perfect score was audited, not celebrated.** A leak audit of the runs' traces (6,478 past issues shown to the model, none from the future) and a breakdown by label show an easier sample, not a leak. With 50 of 50 correct, the honest claim is "above 0.94", and 0.91 [0.80, 0.98] against maintainers' own labels.
+
+Everything behind these numbers: [`reports/test-eval/RESULTS.md`](reports/test-eval/RESULTS.md) (all five systems, the planned paired comparisons, limits), [`ANALYSIS_PLAN.md`](reports/test-eval/ANALYSIS_PLAN.md) (written first), and the frozen session files next to them.
 
 ---
 
@@ -57,7 +82,7 @@ flowchart LR
 
 ## First results: do cheap baselines already solve it? (E1)
 
-**Dev split (n = 100), silver labels, 95% bootstrap intervals.** This is not the headline test-set table yet: the test set stays locked until M8.
+**Dev split (n = 100), silver labels, 95% bootstrap intervals.** This is where the project started; the test-set table is at the top.
 
 | system | T1 labels micro-F1 | T1 area F1 | T3 component acc. | T3 top-3 | T4 needs-info F1 | $/issue |
 |---|---|---|---|---|---|---|
@@ -317,7 +342,11 @@ The process was the one designed for a human:
     - the real API on a fixed subset, approval-gated, capped at $1 and at one run a week;
     - paired-bootstrap deltas, failure-category deltas and a coverage rule;
     - a committed baseline, and an eval pack that cannot contain anything from the test period.
-  - Planned: an approval-gated, audited one-time test-set evaluation.
+  - **Evaluation hygiene as policy in code** (`test-eval.yml`):
+    - the test split runs only through a *session* file committed beforehand, which pins the configs, a hash of the code, skills and configs, and the dataset;
+    - the CLI refuses anything outside the session, any change since the freeze, a second run of a config and a third session; the workflow adds the owner's approval;
+    - it failed safe the first time: a platform-dependent file order in the hash made CI refuse the run before scoring anything. Now a test checks every pending session on Linux and Windows. → [ADR-0046](docs/DECISIONS.md#adr-0046-the-test-split-is-evaluated-through-frozen-sessions-in-ci-from-a-test-pack)
+- **Leak audits of finished runs.** `triagelab runs audit` re-derives from a run's traces what the model was allowed to see, and fails on any past issue that is the issue itself, newer than it, or shown with later labels. → [ADR-0048](docs/DECISIONS.md#adr-0048-finished-runs-are-audited-for-leaks-from-their-traces)
 - **Verify, don't remember.** Before any code, every external API was checked against current docs, and several contradicted older assumptions. → [M0 learning note](docs/learning/M0-foundations.md)
 
 ## Roadmap
@@ -330,7 +359,7 @@ The process was the one designed for a human:
 - [x] **M5 Gold labels, judge, failure taxonomy** (labels by a model annotator, ADR-0035)
 - [x] **M6 Iteration loop + LLM regression gate in CI:** iterations 6–8, ablations E2–E5, `eval.yml`
 - [x] **M7 Decision layer:** LLM (verbalized, logprobs) and classifier backends, calibration, cascade (Jev: no access)
-- [ ] **M8 Transfer repo + one-time test-set evaluation**
+- [x] **M8 Transfer repo + one-time test-set evaluation:** `astral-sh/uv` with a new profile and skill, frozen test sessions, `test-eval.yml`, leak audit
 - [ ] **M9 Report, results site, demo**
 
 ## Quickstart

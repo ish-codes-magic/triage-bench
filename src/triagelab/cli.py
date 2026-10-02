@@ -92,6 +92,41 @@ def runs_stats(
         out.write_bytes(text.encode("utf-8"))
 
 
+@runs_app.command("audit")
+def runs_audit(
+    run_dirs: Annotated[list[Path], typer.Argument(help="Run folders, e.g. runs/<run_id>.")],
+    out: Annotated[Path | None, typer.Option("--out", help="Also write the report here.")] = None,
+) -> None:
+    """Leak audit of finished runs: every past issue the model saw was visible at the time."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.context_audit import audit_run, render
+    from triagelab.eval.dataset import load_split
+    from triagelab.eval.report import load_run
+    from triagelab.retrieval.corpus import Corpus
+    from triagelab.retrieval.index import corpus_path
+
+    lines: list[str] = []
+    leaked = False
+    corpora: dict[Path, Corpus] = {}
+    for run_dir in run_dirs:
+        cfg, split, _ = load_run(run_dir)
+        profile = load_profile(cfg.dataset.profile)
+        path = corpus_path(cfg.dataset.data_dir, profile)
+        corpus = corpora.setdefault(path, Corpus.load(path))
+        examples = load_split(cfg.dataset.data_dir, profile, split)
+        issues = {e.snapshot.issue_ref: e.snapshot for e in examples}
+        audit = audit_run(run_dir / "traces.jsonl", issues, corpus)
+        leaked = leaked or not audit.clean
+        lines.append(f"- `{profile.repo}`, {split}: {render(audit, run_dir.name)}")
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text.encode("utf-8"))
+    if leaked:
+        raise typer.Exit(code=1)
+
+
 @runs_app.command("list")
 def runs_list(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     """List past runs, newest first, with their cost and the all-time spend."""
@@ -230,9 +265,10 @@ def eval_cmd(
     config: Annotated[Path, typer.Option("--config", "-c", help="Experiment config YAML.")],
     split: Annotated[str, typer.Option(help="dev | test | train")] = "dev",
     limit: Annotated[int | None, typer.Option(help="Only the first N issues.")] = None,
-    allow_test: Annotated[
-        bool, typer.Option("--allow-test", help="Unlock the test split (max twice, logged).")
-    ] = False,
+    session: Annotated[
+        Path | None,
+        typer.Option("--session", help="The frozen test session this run belongs to (test only)."),
+    ] = None,
     resume: Annotated[Path | None, typer.Option(help="Continue this run folder.")] = None,
     otlp_endpoint: Annotated[
         str | None,
@@ -245,7 +281,8 @@ def eval_cmd(
 ) -> None:
     """Run an experiment on a split and print its scorecard (with 95% bootstrap CIs)."""
     from triagelab.data.splits import parse_split
-    from triagelab.eval.runner import TestSetLockedError, run_eval
+    from triagelab.eval.runner import run_eval
+    from triagelab.eval.test_session import TestSetLockedError
 
     try:
         split_name = parse_split(split)
@@ -264,7 +301,7 @@ def eval_cmd(
             command=f"eval --config {config.as_posix()} --split {split}",
             log=typer.echo,
             limit=limit,
-            allow_test=allow_test,
+            session=session,
             resume_dir=resume,
         )
     except TestSetLockedError as err:
@@ -317,15 +354,37 @@ def results(
     with_blind_pass: Annotated[
         bool, typer.Option(help="Add the annotators' blind pass (only if independent of the gold).")
     ] = False,
+    name: Annotated[
+        str | None, typer.Option(help="Prefix for the output file, e.g. 'uv' -> uv-test.md.")
+    ] = None,
+    repo_profile: Annotated[
+        Path | None,
+        typer.Option("--profile", "-p", help="Repository profile (default: the config's)."),
+    ] = None,
 ) -> None:
-    """Write the results table (latest run per experiment) to reports/results/<split>.md."""
+    """Write the results table (latest run per experiment, on the config's repository) to
+    reports/results/[<name>-]<split>.md."""
+    import json
+
+    from triagelab.data.build import dataset_paths
+    from triagelab.data.profile import load_profile
     from triagelab.data.splits import parse_split
     from triagelab.eval.report import load_scored_runs, rescore_on_gold, results_table
 
     if labels not in ("silver", "gold"):
         raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
+    if repo_profile is not None:
+        cfg = cfg.model_copy(
+            update={"dataset": cfg.dataset.model_copy(update={"profile": repo_profile})}
+        )
+    profile = load_profile(cfg.dataset.profile)
     runs = load_scored_runs(cfg.paths.runs_dir)
+    # One repository per table: keep the runs made on this config's dataset.
+    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
+    if report.is_file():
+        wanted = json.loads(report.read_text(encoding="utf-8")).get("dataset_hash")
+        runs = [r for r in runs if r.dataset_hash == wanted]
     if labels == "gold":
         runs = rescore_on_gold(
             runs, cfg.paths.runs_dir, cfg, parse_split(split), include_blind_pass=with_blind_pass
@@ -334,8 +393,9 @@ def results(
     if labels == "gold":
         table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / (f"{split}.md" if labels == "silver" else f"{split}-gold.md")
-    heading = f"# Results: {split} split ({labels} labels)"
+    stem = f"{name}-{split}" if name else split
+    out = out_dir / (f"{stem}.md" if labels == "silver" else f"{stem}-gold.md")
+    heading = f"# Results: {profile.repo}, {split} split ({labels} labels)"
     out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
     typer.echo(table)
     typer.echo(f"written to {out.as_posix()}")
@@ -965,13 +1025,17 @@ def gate_pack(
     profile_path: ProfileOpt,
     data_dir: DataDirOpt = Path("data"),
     out: Annotated[Path, typer.Option("--out")] = Path("dist/evalpack.tar.gz"),
+    with_test: Annotated[
+        bool,
+        typer.Option("--with-test", help="A test pack: everything, for a frozen test session."),
+    ] = False,
 ) -> None:
-    """Pack the dataset tables (no test rows) and the retrieval index for CI."""
+    """Pack the dataset tables and the retrieval index for CI (no test period by default)."""
     from triagelab.data.evalpack import build_pack
     from triagelab.data.profile import load_profile
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    manifest = build_pack(data_dir, load_profile(profile_path), out)
+    manifest = build_pack(data_dir, load_profile(profile_path), out, include_test=with_test)
     size = out.stat().st_size / 1e6
     typer.echo(f"{len(manifest.files)} files, splits {manifest.splits}, {size:.1f} MB -> {out}")
 
@@ -981,13 +1045,20 @@ def gate_unpack(
     archive: Annotated[Path, typer.Argument(help="An eval pack (.tar.gz).")],
     profile_path: ProfileOpt,
     data_dir: DataDirOpt = Path("data"),
+    allow_test: Annotated[
+        bool,
+        typer.Option("--allow-test", help="Accept a test pack (the test-eval workflow only)."),
+    ] = False,
 ) -> None:
-    """Unpack and verify an eval pack; refuses anything from the test period."""
+    """Unpack and verify an eval pack; refuses anything from the test period unless
+    --allow-test."""
     from triagelab.data.evalpack import PackError, extract_pack
     from triagelab.data.profile import load_profile
 
     try:
-        manifest = extract_pack(archive, data_dir, load_profile(profile_path))
+        manifest = extract_pack(
+            archive, data_dir, load_profile(profile_path), allow_test=allow_test
+        )
     except PackError as err:
         typer.echo(f"eval pack rejected: {err}", err=True)
         raise typer.Exit(code=1) from err
@@ -1068,3 +1139,94 @@ def cascade(
     out.write_bytes(text.encode())
     _echo_report(text)
     typer.echo(f"written to {out.as_posix()}")
+
+
+session_app = typer.Typer(help="Frozen test-set evaluation sessions.", no_args_is_help=True)
+app.add_typer(session_app, name="test-session")
+
+
+@session_app.command("freeze")
+def session_freeze(
+    profile_path: ProfileOpt,
+    configs: Annotated[list[Path], typer.Option("--config", "-c", help="A config to evaluate.")],
+    note: Annotated[str, typer.Option(help="Why this session exists.")] = "",
+    base_config: Annotated[
+        Path, typer.Option("--base-config", help="Where the data and reports live.")
+    ] = DEFAULT_CONFIG,
+) -> None:
+    """Declare a test evaluation: the configs, the code they run on, and the dataset.
+
+    Commit the file it writes before running anything. At most two sessions per repository.
+    """
+    import json
+
+    from triagelab.data.build import dataset_paths
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.test_session import TestSetLockedError, freeze
+
+    cfg = load_config(base_config)
+    profile = load_profile(profile_path)
+    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
+    dataset_hash = str(json.loads(report.read_text(encoding="utf-8"))["dataset_hash"])
+    try:
+        out = freeze(
+            repo=profile.repo,
+            slug=profile.slug,
+            config_paths=configs,
+            dataset_hash=dataset_hash,
+            note=note,
+        )
+    except TestSetLockedError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=3) from err
+    typer.echo(f"frozen: {out.as_posix()} ({len(configs)} configs)")
+
+
+@session_app.command("run")
+def session_run(
+    session: Annotated[Path, typer.Argument(help="A committed session file.")],
+) -> None:
+    """Evaluate every config of a session on the test split, once each."""
+    from triagelab.eval.runner import run_eval
+    from triagelab.eval.test_session import TestSetLockedError, load_session
+
+    load_dotenv()
+    frozen = load_session(session)
+    for item in frozen.configs:
+        cfg = load_config(Path(item.path))
+        typer.echo(f"== {item.name} ({item.path})")
+        try:
+            outcome = run_eval(
+                cfg,
+                split="test",
+                runs_dir=cfg.paths.runs_dir,
+                command=f"test-session run {session.as_posix()}",
+                log=typer.echo,
+                session=session,
+            )
+        except TestSetLockedError as err:
+            typer.echo(str(err), err=True)
+            raise typer.Exit(code=3) from err
+        typer.echo(f"run {outcome.run_id}: {outcome.completed}/{outcome.total} issues")
+        if outcome.stopped_reason:
+            typer.echo(f"stopped: {outcome.stopped_reason}", err=True)
+            raise typer.Exit(code=2)
+
+
+@session_app.command("import")
+def session_import(
+    session: Annotated[Path, typer.Argument(help="The session that was evaluated.")],
+    artifact_runs: Annotated[Path, typer.Argument(help="The `runs/` folder of the CI artifact.")],
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Copy a CI test evaluation into the run registry and next to its session file."""
+    from triagelab.eval.test_session import TestSetLockedError, import_runs
+
+    cfg = load_config(config)
+    try:
+        imported = import_runs(session, artifact_runs, cfg.paths.runs_dir)
+    except TestSetLockedError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=1) from err
+    for name, run_id in imported.items():
+        typer.echo(f"{name}: {run_id}")

@@ -1,0 +1,50 @@
+name: uv-routed
+budget:
+  usd_total: 150.0
+  usd_per_run: 5.0
+llm:
+  model: openrouter/qwen/qwen3.5-9b
+  route:
+    provider: deepinfra
+    quantization: bf16
+  reasoning: default
+  temperature: 0.0
+  seed: null
+  max_tokens: 1024
+  timeout_s: 60.0
+  named_tool_choice: true
+retry:
+  max_attempts: 4
+  base_delay_s: 1.0
+  max_delay_s: 30.0
+cache:
+  enabled: true
+  dir: .cache/llm
+  replay_only: false
+paths:
+  runs_dir: runs
+  prices_file: configs/prices.yaml
+  ledger_file: runs/spend_ledger.jsonl
+dataset:
+  profile: configs/repos/astral-sh__uv.yaml
+  data_dir: data
+  reports_dir: reports
+eval:
+  concurrency: 8
+  bootstrap_resamples: 1000
+  seed: 0
+  subset: null
+system:
+  kind: routed
+  max_body_chars: 12000
+  min_label_count: 10
+  agent: null
+  decisions: null
+  routed:
+    base: configs/experiments/uv/e3-stuffed.yaml
+    type: configs/experiments/e6-llm-logprobs.yaml
+    component: configs/experiments/e6-llm-verbalized.yaml
+  family_label_min_confidence: 0.0
+tracing:
+  otlp_endpoint: null
+  project: triagelab

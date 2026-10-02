@@ -1,0 +1,186 @@
+{
+  "repo": "astral-sh/uv",
+  "built_at": "2026-10-01T17:57:35.557702Z",
+  "dataset_hash": "3ba60bc3186f10a6d8c97001dbdd7bf67608a6c3b34820af8f7edc240bcd9e9d",
+  "issues": 2826,
+  "split_sizes": {
+    "train": 2543,
+    "excluded": 2,
+    "dev": 100,
+    "dev_reserve": 76,
+    "test_reserve": 55,
+    "test": 50
+  },
+  "exclusions": {
+    "bot_author": 2
+  },
+  "body_edited": 926,
+  "renamed": 301,
+  "comments_truncated": 2,
+  "timeline_truncated": 0,
+  "rates": {
+    "pool_n": 281,
+    "pool_rate": {
+      "duplicate": 0.021352313167259787,
+      "needs_info": 0.0498220640569395,
+      "component": 0.20640569395017794
+    },
+    "sample_rate": {
+      "dev": {
+        "duplicate": 0.03,
+        "needs_info": 0.08,
+        "component": 0.33
+      },
+      "test": {
+        "duplicate": 0.06,
+        "needs_info": 0.12,
+        "component": 0.34
+      }
+    },
+    "weighted_rate": {
+      "dev": {
+        "duplicate": 0.017045454545454544,
+        "needs_info": 0.045454545454545456,
+        "component": 0.2215909090909091
+      },
+      "test": {
+        "duplicate": 0.02857142857142857,
+        "needs_info": 0.05714285714285714,
+        "component": 0.18095238095238095
+      }
+    }
+  },
+  "label_sources": {
+    "author": 188,
+    "triager": 72,
+    "unknown": 1
+  },
+  "human_triaged_rate": {
+    "train": 0.27683837986629967,
+    "dev": 0.26,
+    "test": 0.32
+  },
+  "top_labels": {
+    "type": [
+      [
+        "bug",
+        92
+      ],
+      [
+        "enhancement",
+        72
+      ],
+      [
+        "question",
+        51
+      ],
+      [
+        "documentation",
+        2
+      ]
+    ],
+    "area": [
+      [
+        "performance",
+        4
+      ],
+      [
+        "internal",
+        3
+      ]
+    ],
+    "family": [
+      [
+        "area:windows",
+        10
+      ],
+      [
+        "area:cli",
+        6
+      ],
+      [
+        "area:uv-audit",
+        5
+      ],
+      [
+        "area:error-messages",
+        5
+      ],
+      [
+        "area:build-backend",
+        2
+      ],
+      [
+        "area:registry",
+        2
+      ],
+      [
+        "area:configuration",
+        2
+      ],
+      [
+        "area:environments",
+        1
+      ],
+      [
+        "area:uv-tool",
+        1
+      ],
+      [
+        "area:resolver",
+        1
+      ],
+      [
+        "area:json-output",
+        1
+      ],
+      [
+        "area:uv-check",
+        1
+      ]
+    ]
+  },
+  "duplicate_sources": {
+    "state_reason": 85,
+    "comment": 2
+  },
+  "components": {
+    "dev": {
+      "(none)": 67,
+      "cli": 15,
+      "resolver": 9,
+      "installer": 2,
+      "network": 2,
+      "docs": 1,
+      "cache": 1,
+      "tests": 1,
+      "build": 1,
+      "projects": 1
+    },
+    "test": {
+      "(none)": 33,
+      "cli": 6,
+      "resolver": 4,
+      "installer": 2,
+      "projects": 2,
+      "network": 1,
+      "build": 1,
+      "infra": 1
+    },
+    "train": {
+      "(none)": 2103,
+      "cli": 155,
+      "resolver": 71,
+      "installer": 53,
+      "python": 37,
+      "network": 29,
+      "build": 26,
+      "docs": 21,
+      "infra": 17,
+      "tests": 15,
+      "projects": 13,
+      "cache": 3
+    }
+  },
+  "component_skipped_ties": 33
+}

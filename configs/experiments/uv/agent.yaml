@@ -1,0 +1,8 @@
+# E8 (transfer, H4): the reference agent on astral-sh/uv. Only the repository profile and
+# the skill differ from ../agent.yaml; the harness, prompts, tools and budgets are the same.
+extends: ../agent.yaml
+name: uv-agent
+dataset: {profile: configs/repos/astral-sh__uv.yaml}
+system:
+  agent:
+    skills: [triage-uv]

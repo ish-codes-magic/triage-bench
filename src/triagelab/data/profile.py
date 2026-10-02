@@ -66,6 +66,22 @@ class Taxonomy(_Strict):
         return label in self.type or label in self.area or label.startswith(self.prefixes)
 
 
+class PromptWording(_Strict):
+    """How this repository's labels are described to a model.
+
+    The shared prompts used to say "area labels have no prefix" and "Topic and OS labels":
+    true for CPython, wrong for a repository whose area labels are `area:...` (ADR-0047).
+    The defaults are neutral; each profile states its own wording.
+    """
+
+    # Continues "Copy them exactly as written", e.g. '; "area:" is part of the name'.
+    label_note: str = ""
+    area_heading: str = "Other labels"  # heads `taxonomy.area`
+    family_heading: str = "Area labels"  # heads the prefixed families
+    # The single-shot baseline's one-line description of what to pick.
+    single_shot_labels: str = "normally one type label, plus other labels that clearly apply"
+
+
 class Component(_Strict):
     name: str
     prefixes: tuple[str, ...]
@@ -86,6 +102,7 @@ class RepoProfile(_Strict):
     )
     components: tuple[Component, ...]
     ignore_paths: tuple[str, ...] = ()
+    wording: PromptWording = PromptWording()
 
     @property
     def slug(self) -> str:

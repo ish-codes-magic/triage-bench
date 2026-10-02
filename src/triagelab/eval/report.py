@@ -32,6 +32,7 @@ Labels = Literal["silver", "gold"]
 # information (ADR-0036).
 HEADLINE = (
     "t1_micro_f1",
+    "t1_type_micro_f1",
     "t1_area_micro_f1",
     "t2_link_f1",
     "t3_accuracy",
@@ -107,21 +108,23 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
             latest[run.name] = run
     rows = sorted(latest.values(), key=lambda r: r.name)
     header = (
-        "| experiment | system | T1 micro-F1 | T1 area F1 | T2 link F1 | T3 acc | T3 top-3 | "
-        "$/issue | p50 latency |"
+        "| experiment | system | T1 micro-F1 | T1 type F1 | T1 area F1 | T2 link F1 | T3 acc | "
+        "T3 top-3 | fallbacks | $/issue | p50 latency |"
     )
-    lines = [header, "|" + "---|" * 9]
+    lines = [header, "|" + "---|" * 11]
     for r in rows:
         cells = " | ".join(_cell(r.metrics.get(m)) for m in HEADLINE)
         latency = "replay" if r.replayed else f"{r.stats.latency_ms_p50 / 1000:.1f}s"
         lines.append(
-            f"| {r.name} | {r.system} | {cells} | ${r.stats.cost_usd_per_issue:.5f} | {latency} |"
+            f"| {r.name} | {r.system} | {cells} | {r.stats.errors} | "
+            f"${r.stats.cost_usd_per_issue:.5f} | {latency} |"
         )
     hashes = sorted({r.dataset_hash[:12] for r in rows})
     lines += [
         "",
         f"Silver labels, {split} split (n = {rows[0].stats.issues if rows else 0}). "
         "Cells are point estimates with 95% bootstrap intervals (1,000 issue resamples). "
+        "Fallbacks are issues the system could not answer; they are scored as wrong. "
         f"Dataset hash: {', '.join(hashes) or 'n/a'}. Runs: "
         + ", ".join(f"`{r.run_id}`" for r in rows)
         + ".",
@@ -129,7 +132,8 @@ def results_table(runs: list[ScoredRun], split: str) -> str:
     if any(r.replayed for r in rows):
         lines.append(
             '\n"replay": the run re-used every model answer from the cache (a post-processing '
-            "change), so its latency measures the replay; the live run's latency applies."
+            "change, or an earlier run that made the same calls), so its latency measures the "
+            "replay; the live run's latency applies."
         )
     return "\n".join(lines) + "\n"
 

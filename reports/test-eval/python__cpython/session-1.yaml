@@ -1,0 +1,27 @@
+version: 1
+repo: python/cpython
+number: 1
+created_at: '2026-10-02T00:53:53.075564Z'
+code_hash: e9f1055f582b6ece0ff86b599469336c02894dcc6de9482facd18718db2830d1
+dataset_hash: 23ee2ef6f25bf3cdff548bd07b864b0857ba6344a84b0f8507f943ebecd68ac9
+configs:
+- path: configs/experiments/routed.yaml
+  name: routed
+  fingerprint: 2cc1eb7a90cb6a0c
+- path: configs/experiments/agent.yaml
+  name: agent
+  fingerprint: 5f73a106f989
+- path: configs/experiments/e3-stuffed.yaml
+  name: e3-stuffed
+  fingerprint: dde819a3c47f
+- path: configs/experiments/e1-classifier.yaml
+  name: e1-classifier
+  fingerprint: bc8659b1f74c
+- path: configs/experiments/e1-llm-single-shot-thinking-floor.yaml
+  name: e1-llm-single-shot-thinking-floor
+  fingerprint: 27a296bf01ad
+note: 'M8 one-time evaluation of the final configs (owner, 2026-10-01): the routed
+  system is the headline; the full agent, the stuffed agent and two baselines are
+  its references. Re-frozen on 2026-10-02 before any test issue was scored: the first
+  freeze (commit 682f46a) was refused in CI because the code hash depended on the
+  platform''s file order (ADR-0046).'

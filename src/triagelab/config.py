@@ -110,7 +110,7 @@ class PathsConfig(_Strict):
     ledger_file: PortablePath = Path("runs/spend_ledger.jsonl")
 
 
-SystemKind = Literal["majority", "classifier", "llm_single_shot", "agent", "decisions"]
+SystemKind = Literal["majority", "classifier", "llm_single_shot", "agent", "decisions", "routed"]
 
 
 class AgentBudgetConfig(_Strict):
@@ -175,6 +175,16 @@ class DecisionsConfig(_Strict):
     classifier_c: float = Field(default=1.0, gt=0, description="Inverse L2 strength.")
 
 
+class RoutedConfig(_Strict):
+    """M8: a base triage system whose type label and component are overwritten by
+    decision backends (decisions/routed.py). Each value is an experiment config; the
+    routed config's own dataset, paths, cache and budget apply to all of them."""
+
+    base: PortablePath
+    type: PortablePath | None = None
+    component: PortablePath | None = None
+
+
 class SystemConfig(_Strict):
     """Which triage system an experiment evaluates, and its knobs."""
 
@@ -185,6 +195,7 @@ class SystemConfig(_Strict):
     min_label_count: int = Field(default=10, ge=1)
     agent: AgentConfig | None = None  # required when kind is "agent"
     decisions: DecisionsConfig | None = None  # required when kind is "decisions"
+    routed: RoutedConfig | None = None  # required when kind is "routed"
     # Iteration 8: topic/OS labels below this confidence are dropped, by every LLM-based
     # system (triagelab/labels.py). 0 keeps everything.
     family_label_min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -212,6 +223,8 @@ class SystemConfig(_Strict):
             raise ValueError(
                 "system.decisions is required for kind 'decisions' and only allowed there"
             )
+        if (self.kind == "routed") != (self.routed is not None):
+            raise ValueError("system.routed is required for kind 'routed' and only allowed there")
         return self
 
 

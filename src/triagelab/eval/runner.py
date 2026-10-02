@@ -26,7 +26,7 @@ from triagelab import wiring
 from triagelab.baselines.classifier import ClassifierTriager
 from triagelab.baselines.llm_single_shot import LLMSingleShotTriager
 from triagelab.baselines.majority import MajorityTriager
-from triagelab.config import Config, read_subset
+from triagelab.config import Config, RoutedConfig, read_subset
 from triagelab.cost import BudgetExceededError
 from triagelab.data.build import dataset_paths
 from triagelab.data.profile import RepoProfile, load_profile
@@ -35,54 +35,12 @@ from triagelab.data.storage import append_jsonl, read_jsonl, write_json, write_p
 from triagelab.eval.dataset import EvalExample, family_vocabulary, load_history, load_split
 from triagelab.eval.registry import create_run, git_info, write_cost
 from triagelab.eval.score import Scorecard, score
+from triagelab.eval.test_session import TestSetLockedError, authorize, record
 from triagelab.llm_client import CallStats, CassetteMissError, LLMClient
 from triagelab.triage import Triager, TriageResult
 
-TEST_EVALUATION_LIMIT = 2
 INFRA_ERROR_PREFIX = "infra: "
 Log = Callable[[str], None]
-
-
-class TestSetLockedError(RuntimeError):
-    """The test split was requested without permission, or its evaluation budget is spent."""
-
-    __test__ = False  # not a pytest test class, despite the name
-
-
-class TestSetGuard:
-    """Policy as code: test-set evaluations need a flag and are capped and logged."""
-
-    __test__ = False  # not a pytest test class, despite the name
-
-    def __init__(self, runs_dir: Path) -> None:
-        self._log = runs_dir / "test_evaluations.jsonl"
-
-    def evaluations(self) -> list[dict[str, str]]:
-        if not self._log.exists():
-            return []
-        return [
-            json.loads(line) for line in self._log.read_text(encoding="utf-8").splitlines() if line
-        ]
-
-    def authorize(self, allow: bool) -> None:
-        if not allow:
-            raise TestSetLockedError(
-                "The test split is locked. Iterate on dev; pass --allow-test only for the "
-                "final evaluation (at most twice in the project, AGENTS.md §7.4)."
-            )
-        used = len(self.evaluations())
-        if used >= TEST_EVALUATION_LIMIT:
-            raise TestSetLockedError(f"Test set already evaluated {used} times (limit 2).")
-
-    def record(self, run_id: str, config_name: str) -> None:
-        self._log.parent.mkdir(parents=True, exist_ok=True)
-        with self._log.open("a", encoding="utf-8", newline="\n") as f:
-            f.write(
-                json.dumps(
-                    {"run_id": run_id, "config": config_name, "at": datetime.now(UTC).isoformat()}
-                )
-                + "\n"
-            )
 
 
 class RunOutcome(BaseModel):
@@ -98,7 +56,7 @@ class RunOutcome(BaseModel):
 def build_triager(
     cfg: Config,
     profile: RepoProfile,
-    client: Callable[[], LLMClient],
+    client: Callable[[Config], LLMClient],
     *,
     run_id: str,
     run_dir: Path,
@@ -118,7 +76,13 @@ def build_triager(
     if cfg.system.decisions is not None:  # kind == "decisions"
         from triagelab.decisions.factory import build_decision_triager
 
-        return build_decision_triager(cfg, cfg.system.decisions, profile, train, client)
+        return build_decision_triager(
+            cfg, cfg.system.decisions, profile, train, lambda: client(cfg)
+        )
+    if cfg.system.routed is not None:  # kind == "routed"
+        return _build_routed(
+            cfg, cfg.system.routed, profile, client, run_id=run_id, run_dir=run_dir, stack=stack
+        )
     if cfg.system.agent is not None:  # kind == "agent" (the config validator pairs them)
         from triagelab.harness.factory import build_agent  # MCP/OTel imports only when needed
 
@@ -127,7 +91,7 @@ def build_triager(
             cfg.system.agent,
             profile,
             family_vocabulary(train, cfg.system.min_label_count),
-            client(),
+            client(cfg),
             max_body_chars=cfg.system.max_body_chars,
             family_label_min_confidence=cfg.system.family_label_min_confidence,
             run_id=run_id,
@@ -135,13 +99,62 @@ def build_triager(
             stack=stack,
         )
     return LLMSingleShotTriager(
-        client(),
+        client(cfg),
         cfg.llm,
         profile,
         family_vocabulary(train, cfg.system.min_label_count),
         max_body_chars=cfg.system.max_body_chars,
         family_label_min_confidence=cfg.system.family_label_min_confidence,
     )
+
+
+def _build_routed(
+    cfg: Config,
+    routed: RoutedConfig,
+    profile: RepoProfile,
+    client: Callable[[Config], LLMClient],
+    *,
+    run_id: str,
+    run_dir: Path,
+    stack: ExitStack,
+) -> Triager:
+    """Build every part from its own experiment config, in this run's environment."""
+    from triagelab.config import load_config
+    from triagelab.decisions.questions import QuestionId
+    from triagelab.decisions.routed import RoutedTriager
+
+    def part(path: Path) -> Config:
+        # The part contributes its model and system; where the data, cache and budget
+        # live is the routed run's decision.
+        sub = load_config(path)
+        return sub.model_copy(
+            update={
+                "dataset": cfg.dataset,
+                "paths": cfg.paths,
+                "cache": cfg.cache,
+                "budget": cfg.budget,
+                "tracing": cfg.tracing,
+            }
+        )
+
+    def build(sub: Config) -> Triager:
+        return build_triager(sub, profile, client, run_id=run_id, run_dir=run_dir, stack=stack)
+
+    deciders: dict[QuestionId, Triager] = {}
+    questions: tuple[tuple[QuestionId, Path | None], ...] = (
+        ("type", routed.type),
+        ("component", routed.component),
+    )
+    for qid, path in questions:
+        if path is None:
+            continue
+        sub = part(path)
+        if sub.system is None or sub.system.decisions is None:
+            raise ValueError(f"routed.{qid} must be a decisions config: {path}")
+        only = sub.system.decisions.model_copy(update={"questions": [qid]})
+        system = sub.system.model_copy(update={"decisions": only})
+        deciders[qid] = build(sub.model_copy(update={"system": system}))
+    return RoutedTriager(build(part(routed.base)), deciders, profile.taxonomy.type)
 
 
 def _subset(examples: list[EvalExample], refs: list[str], split: Split) -> list[EvalExample]:
@@ -193,14 +206,29 @@ def run_eval(
     command: str,
     log: Log,
     limit: int | None = None,
-    allow_test: bool = False,
+    session: Path | None = None,
+    sessions_root: Path = Path(),
     resume_dir: Path | None = None,
 ) -> RunOutcome:
-    test_guard = TestSetGuard(runs_dir)
-    if split == "test":
-        test_guard.authorize(allow_test)
-
+    """`session`: the frozen test session this run belongs to; required for the test split
+    (eval/test_session.py). `sessions_root` is where session files live (the repository)."""
     profile = load_profile(cfg.dataset.profile)
+    frozen = None
+    if split == "test":
+        if session is None:
+            raise TestSetLockedError(
+                "The test split is locked. Iterate on dev; the test split is evaluated only "
+                "through a frozen session (`triagelab test-session freeze`, AGENTS.md §7.4)."
+            )
+        if limit is not None or cfg.eval.subset is not None:
+            raise TestSetLockedError("A test session evaluates the whole test split, not a part.")
+        frozen = authorize(
+            session,
+            cfg,
+            profile.slug,
+            dataset_hash=_dataset_hash(cfg, profile),
+            root=sessions_root,
+        )
     examples = load_split(cfg.dataset.data_dir, profile, split)
     if cfg.eval.subset is not None:
         examples = _subset(examples, read_subset(cfg.eval.subset), split)
@@ -229,10 +257,13 @@ def run_eval(
 
     clients: list[LLMClient] = []
 
-    def client() -> LLMClient:
-        clients.append(wiring.build_llm_client(cfg, run_id=run_id))
+    def client(for_cfg: Config) -> LLMClient:
+        # One client per (sub-)config: a routed system's parts use different routes.
+        clients.append(wiring.build_llm_client(for_cfg, run_id=run_id))
         return clients[-1]
 
+    if frozen is not None and session is not None:
+        record(session, frozen, cfg, run_id, "started")
     kind = cfg.system.kind if cfg.system else "?"
     log(f"run {run_id}: building {kind} on {split} ({len(examples)} issues)")
     with ExitStack() as stack:  # agent resources: the MCP server process, trace export
@@ -297,8 +328,8 @@ def run_eval(
                 for p in predictions
             ],
         )
-        if split == "test":
-            test_guard.record(run_id, cfg.name)
+        if frozen is not None and session is not None:
+            record(session, frozen, cfg, run_id, "completed")
     return RunOutcome(
         run_id=run_id,
         run_dir=run_dir,

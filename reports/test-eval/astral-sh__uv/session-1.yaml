@@ -1,0 +1,26 @@
+version: 1
+repo: astral-sh/uv
+number: 1
+created_at: '2026-10-02T00:53:54.069372Z'
+code_hash: e9f1055f582b6ece0ff86b599469336c02894dcc6de9482facd18718db2830d1
+dataset_hash: 3ba60bc3186f10a6d8c97001dbdd7bf67608a6c3b34820af8f7edc240bcd9e9d
+configs:
+- path: configs/experiments/uv/routed.yaml
+  name: uv-routed
+  fingerprint: dadac5e317c2552e
+- path: configs/experiments/uv/agent.yaml
+  name: uv-agent
+  fingerprint: 63270fe210ba
+- path: configs/experiments/uv/e3-stuffed.yaml
+  name: uv-stuffed
+  fingerprint: cd92c1a6cc80
+- path: configs/experiments/uv/classifier.yaml
+  name: uv-classifier
+  fingerprint: d51e1330cad9
+- path: configs/experiments/uv/llm-single-shot.yaml
+  name: uv-llm-single-shot
+  fingerprint: 45059aeb31a7
+note: 'E8 transfer (H4): the same systems on astral-sh/uv, with only the repository
+  profile and the skill swapped. The uv dev split was never evaluated. Re-frozen on
+  2026-10-02 before any test issue was scored: the first freeze (commit 682f46a) was
+  refused in CI because the code hash depended on the platform''s file order (ADR-0046).'

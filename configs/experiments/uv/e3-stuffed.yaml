@@ -1,0 +1,7 @@
+# E8 (transfer, H4): the stuffed agent on astral-sh/uv; profile and skill swapped only.
+extends: ../e3-stuffed.yaml
+name: uv-stuffed
+dataset: {profile: configs/repos/astral-sh__uv.yaml}
+system:
+  agent:
+    skills: [triage-uv]

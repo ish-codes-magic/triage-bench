@@ -50,3 +50,10 @@ def test_regex_characters_are_literal(tree: Path, use_rg: bool) -> None:
 
 def test_empty_query_finds_nothing(tree: Path) -> None:
     assert CodeSearcher(tree).search("   ") == ([], False)
+
+
+def test_ripgrep_is_never_picked_up_implicitly(tree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Search results must not depend on what the machine has installed.
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/rg")
+    assert CodeSearcher(tree)._rg is None  # pyright: ignore[reportPrivateUsage]
+    assert CodeSearcher(tree, use_ripgrep=True)._rg == "/usr/bin/rg"  # pyright: ignore[reportPrivateUsage]

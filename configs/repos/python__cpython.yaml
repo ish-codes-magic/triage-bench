@@ -22,6 +22,14 @@ taxonomy:
   area: [stdlib, extension-modules, interpreter-core, docs, tests, build, infra, performance]
   prefixes: ["topic-", "OS-"]
 
+# How the labels are described in prompts (ADR-0047). These are the exact words the
+# prompts used while this wording was still hard-coded, so CPython's prompts are unchanged.
+wording:
+  label_note: '; area labels have no prefix (write "stdlib", never "area-stdlib")'
+  area_heading: Area labels
+  family_heading: Topic and OS labels
+  single_shot_labels: normally one type-* label, plus area/topic/OS labels that clearly apply
+
 # T4. CPython's "pending": "The issue will be closed if no feedback is provided".
 needs_info_labels: [pending]
 

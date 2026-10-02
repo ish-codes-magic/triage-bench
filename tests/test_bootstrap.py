@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from triagelab.eval.bootstrap import bootstrap_ci, paired_bootstrap
+from triagelab.eval.bootstrap import bootstrap_ci, paired_bootstrap, zero_failure_bound
 
 
 def mean_of(values: Sequence[float]) -> Callable[[Sequence[int]], float]:
@@ -67,3 +67,23 @@ def test_paired_bootstrap_detects_a_consistent_improvement() -> None:
     assert d.significant
     assert d.low > 0
     assert d.share_b_better == 1.0
+
+
+def test_zero_failure_bound_matches_the_closed_form() -> None:
+    # (1 - p) ** n = 0.05, by hand: n = 1 -> 0.95; n = 50 -> 1 - 0.05 ** 0.02 = 0.05816
+    assert zero_failure_bound(1) == pytest.approx(0.95)
+    assert zero_failure_bound(50) == pytest.approx(0.05816, abs=1e-5)
+    assert zero_failure_bound(50, confidence=0.99) == pytest.approx(0.08799, abs=1e-5)
+
+
+def test_zero_failure_bound_is_close_to_the_rule_of_three() -> None:
+    for n in (30, 100, 1000):
+        assert zero_failure_bound(n) == pytest.approx(3 / n, rel=0.06)
+
+
+def test_zero_failure_bound_edge_cases() -> None:
+    assert zero_failure_bound(0) == 1.0  # no trials: anything is possible
+    with pytest.raises(ValueError, match="n"):
+        zero_failure_bound(-1)
+    with pytest.raises(ValueError, match="confidence"):
+        zero_failure_bound(10, confidence=1.0)

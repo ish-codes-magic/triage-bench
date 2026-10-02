@@ -1039,3 +1039,28 @@ Lightweight ADRs: **Context → Decision → Consequences**. Once a decision is 
   - median latency fell from 100 s to 34 s.
 - The remaining loops are the 9B model's own indecision (question vs. documentation; wanting to verify code it has no tool for). The harness bounds them (output cap, then a nudge), and the rate is reported as a transfer finding.
 - This is a correction to the transfer claim: the harness was not repo-neutral until this change. It was found before any uv dev or test issue was evaluated.
+
+**Correction (2026-10-02, after the test runs): the effect on runaway reasoning is not established.**
+- The Context above compares the wrong things: 20% is the **stuffed** agent on uv, and 0.3% is the **full** agent on CPython dev.
+- Like for like, the stuffed agent hits the output limit about as often on both repositories: 12.9% of calls on CPython dev (27 of 209), 14.4% on CPython test (15 of 104) and 14.4% on uv test (22 of 153). The full agent is at 0.3–1.4% on both.
+- So runaway reasoning is a property of the stuffed configuration (mostly its second call), not of the transfer, and "7 of 35 → 3 of 33" on 12 issues is within the noise of a 13–14% base rate.
+- The change itself stands: a prompt that tells uv "area labels have no prefix" contradicts uv's own labels, and repository rules belong in the profile. What is withdrawn is the claim that it reduced runaway reasoning, and the plan's "transfer finding" about it.
+
+## ADR-0048: Finished runs are audited for leaks from their traces
+
+**Context.**
+- On CPython test the routed system matched gold on all 50 type labels (dev: 0.87). A perfect score is more often a leak than a result.
+- The `as_of` guard was tested where it is enforced (corpus, MCP server), but nothing checked what a *finished run* had actually shown the model. The test runs were made in CI from a published pack, so "it worked on my machine" proved nothing about them.
+
+**Decision.**
+- `eval/context_audit.py` reads a run's traces and collects every past issue that reached the model: rows of the stuffed agent's `<similar_issues>` block, and results of `search_similar_issues` and `get_issue`.
+- Each one is checked against the corpus as of the triaged issue's creation time: it must not be that issue, must be older, and must show the labels it had then.
+- `triagelab runs audit <run>...` prints one line per run and exits non-zero on any leak.
+- Alternatives not taken:
+  - re-running the issues with extra logging: costs money, and can't cover runs made elsewhere;
+  - trusting the unit tests alone: they test the guard, not that every code path goes through it.
+
+**Consequences.**
+- The six test runs that use retrieval are clean: 6,478 past issues, none the issue itself, none newer, none with later labels (`reports/test-eval/context-audit.md`).
+- The 1.00 is reported as an easier sample, with the audit as evidence (`reports/test-eval/RESULTS.md`, section 5).
+- Limits: a tool result truncated in the trace loses its labels (7 of 6,478; counted, not checked), and code search is outside the audit because the checkout is frozen before the data window.

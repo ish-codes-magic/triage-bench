@@ -4,6 +4,8 @@ Written on 2026-10-02, after both sessions were frozen (`682f46a`) and dispatche
 
 Session 1 was re-frozen once on 2026-10-02 because of a bug in the session tooling, before any test issue was scored (ADR-0046, "Correction"). The configs and this plan are unchanged.
 
+One premise below turned out to be wrong and is left as written: the "runaway reasoning" caveat compared uv's stuffed agent with CPython's full agent. `RESULTS.md` reports the like-for-like rates (ADR-0047, "Correction").
+
 ## What is scored
 
 - **Runs:** the five configs of each session, exactly as produced by `test-eval.yml`. An issue that ends as a fallback or an error is scored as a wrong answer, never dropped.

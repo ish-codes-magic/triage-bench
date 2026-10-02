@@ -364,41 +364,53 @@ def results(
 ) -> None:
     """Write the results table (latest run per experiment, on the config's repository) to
     reports/results/[<name>-]<split>.md."""
-    import json
-
-    from triagelab.data.build import dataset_paths
-    from triagelab.data.profile import load_profile
     from triagelab.data.splits import parse_split
-    from triagelab.eval.report import load_scored_runs, rescore_on_gold, results_table
+    from triagelab.eval.report import results_document
 
-    if labels not in ("silver", "gold"):
-        raise typer.BadParameter("labels must be silver or gold")
     cfg = load_config(config)
     if repo_profile is not None:
         cfg = cfg.model_copy(
             update={"dataset": cfg.dataset.model_copy(update={"profile": repo_profile})}
         )
-    profile = load_profile(cfg.dataset.profile)
-    runs = load_scored_runs(cfg.paths.runs_dir)
-    # One repository per table: keep the runs made on this config's dataset.
-    report = dataset_paths(cfg.dataset.data_dir, cfg.dataset.reports_dir, profile).report_json
-    if report.is_file():
-        wanted = json.loads(report.read_text(encoding="utf-8")).get("dataset_hash")
-        runs = [r for r in runs if r.dataset_hash == wanted]
-    if labels == "gold":
-        runs = rescore_on_gold(
-            runs, cfg.paths.runs_dir, cfg, parse_split(split), include_blind_pass=with_blind_pass
-        )
-    table = results_table(runs, split)
-    if labels == "gold":
-        table = table.replace("Silver labels,", "Gold labels (adjudicated issues only),", 1)
+    document = results_document(
+        cfg,
+        cfg.paths.runs_dir,
+        parse_split(split),
+        _labels(labels),
+        with_blind_pass=with_blind_pass,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{name}-{split}" if name else split
     out = out_dir / (f"{stem}.md" if labels == "silver" else f"{stem}-gold.md")
-    heading = f"# Results: {profile.repo}, {split} split ({labels} labels)"
-    out.write_bytes("\n\n".join([heading, table]).encode("utf-8"))
-    typer.echo(table)
+    out.write_bytes(document.encode("utf-8"))
+    typer.echo(document.split("\n\n", 1)[1])
     typer.echo(f"written to {out.as_posix()}")
+
+
+@app.command()
+def reproduce(
+    spec: Annotated[
+        Path, typer.Option(help="What to rebuild, and from which public inputs.")
+    ] = Path("reports/test-eval/reproduce.yaml"),
+    config: ConfigOpt = DEFAULT_CONFIG,
+) -> None:
+    """Rebuild the headline test-set tables from public inputs, and compare them with the
+    committed ones. Calls no model and needs no API key."""
+    from triagelab.eval.reproduce import ReproduceError, load_spec
+    from triagelab.eval.reproduce import reproduce as rebuild
+
+    try:
+        outcomes = rebuild(load_spec(spec), load_config(config))
+    except ReproduceError as err:
+        typer.echo(str(err), err=True)
+        raise typer.Exit(code=1) from err
+    for o in outcomes:
+        _echo_report(o.document)
+        verdict = "identical to" if o.matches else "DIFFERENT from"
+        typer.echo(f"{o.repo}: dataset {o.dataset}; the table is {verdict} {o.expected.as_posix()}")
+        typer.echo("")
+    if not all(o.matches for o in outcomes):
+        raise typer.Exit(code=1)
 
 
 @data_app.command("checkout")

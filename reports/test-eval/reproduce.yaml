@@ -1,0 +1,15 @@
+# What `triagelab reproduce` rebuilds: the headline (test-set) tables, from public inputs.
+# The packs are release assets of this repository; the SHA-256 values pin their contents.
+targets:
+  - repo: python/cpython
+    profile: configs/repos/python__cpython.yaml
+    pack_url: https://github.com/ish-codes-magic/triage-bench/releases/download/testpack-python__cpython-v1/testpack.tar.gz
+    pack_sha256: 7ba84cbd897430dce391a4a505e7fd7e4c00fea4cc9b28faa8c7831a43519e0d
+    records: reports/test-eval/python__cpython/session-1
+    expected: reports/results/test-gold.md
+  - repo: astral-sh/uv
+    profile: configs/repos/astral-sh__uv.yaml
+    pack_url: https://github.com/ish-codes-magic/triage-bench/releases/download/testpack-astral-sh__uv-v1/testpack.tar.gz
+    pack_sha256: 9b98b7bdcf7ad20c55e92be8ebf1e02ed85ffd41cbe3fc722f8004ba39b32a74
+    records: reports/test-eval/astral-sh__uv/session-1
+    expected: reports/results/uv-test-gold.md

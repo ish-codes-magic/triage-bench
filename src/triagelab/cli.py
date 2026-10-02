@@ -92,6 +92,41 @@ def runs_stats(
         out.write_bytes(text.encode("utf-8"))
 
 
+@runs_app.command("audit")
+def runs_audit(
+    run_dirs: Annotated[list[Path], typer.Argument(help="Run folders, e.g. runs/<run_id>.")],
+    out: Annotated[Path | None, typer.Option("--out", help="Also write the report here.")] = None,
+) -> None:
+    """Leak audit of finished runs: every past issue the model saw was visible at the time."""
+    from triagelab.data.profile import load_profile
+    from triagelab.eval.context_audit import audit_run, render
+    from triagelab.eval.dataset import load_split
+    from triagelab.eval.report import load_run
+    from triagelab.retrieval.corpus import Corpus
+    from triagelab.retrieval.index import corpus_path
+
+    lines: list[str] = []
+    leaked = False
+    corpora: dict[Path, Corpus] = {}
+    for run_dir in run_dirs:
+        cfg, split, _ = load_run(run_dir)
+        profile = load_profile(cfg.dataset.profile)
+        path = corpus_path(cfg.dataset.data_dir, profile)
+        corpus = corpora.setdefault(path, Corpus.load(path))
+        examples = load_split(cfg.dataset.data_dir, profile, split)
+        issues = {e.snapshot.issue_ref: e.snapshot for e in examples}
+        audit = audit_run(run_dir / "traces.jsonl", issues, corpus)
+        leaked = leaked or not audit.clean
+        lines.append(f"- `{profile.repo}`, {split}: {render(audit, run_dir.name)}")
+    text = "\n".join(lines) + "\n"
+    typer.echo(text)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text.encode("utf-8"))
+    if leaked:
+        raise typer.Exit(code=1)
+
+
 @runs_app.command("list")
 def runs_list(config: ConfigOpt = DEFAULT_CONFIG) -> None:
     """List past runs, newest first, with their cost and the all-time spend."""

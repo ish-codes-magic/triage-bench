@@ -169,6 +169,10 @@ def test_results_table_and_compare(workspace: Path) -> None:
     table = results_table(load_scored_runs(workspace / "runs"), "dev")
     assert "| e-a | majority |" in table
     assert "| e-b | majority |" in table
+    header, rule, first, *_ = table.splitlines()
+    assert "| T1 type F1 |" in header
+    assert "| fallbacks |" in header
+    assert header.count("|") == rule.count("|") == first.count("|")  # the columns line up
     rows = compare_runs(a.run_dir, b.run_dir, resamples=100)
     assert all(r.delta in (0.0, None) for r in rows)  # identical systems
     assert not any(r.significant for r in rows)

@@ -1,0 +1,46 @@
+# The results site: which committed reports go on which page.
+# Build with: triagelab site build   (writes ./site, needs no data and no model)
+title: triagelab
+tagline: eval-driven GitHub issue triage
+repo_url: https://github.com/ish-codes-magic/triage-bench
+branch: main
+pages:
+  - slug: index
+    title: Overview
+    sources:
+      - reports/site/overview.md
+  - slug: test-set
+    title: Test set
+    sources:
+      - reports/test-eval/RESULTS.md
+      - reports/results/test-gold.md
+      - reports/results/uv-test-gold.md
+      - reports/experiments/m8-test-cpython-gold.md
+      - reports/experiments/m8-test-uv-gold.md
+      - reports/test-eval/ANALYSIS_PLAN.md
+      - reports/test-eval/context-audit.md
+  - slug: experiments
+    title: Experiments (dev)
+    sources:
+      - reports/results/dev-gold.md
+      - reports/experiments/m6-ablations-gold.md
+      - reports/experiments/m6-iterations-gold.md
+      - reports/retrieval/python__cpython.md
+  - slug: calibration
+    title: Calibration and cascade
+    sources:
+      - reports/calibration/e6-gold.md
+      - reports/cascade/e7-gold.md
+      - reports/consistency/dev-gold.md
+  - slug: trace
+    title: Example trace
+    sources:
+      - reports/site/trace.md
+  - slug: data
+    title: Data and labels
+    sources:
+      - data/DATASET_CARD.md
+      - reports/gold/dev.md
+      - reports/gold/test.md
+      - reports/gold/uv/test.md
+      - reports/judge/judge-test.md

@@ -4,7 +4,7 @@
 # The server speaks MCP over stdio, so run it with -i and without a TTY.
 # See src/triagelab/mcp_server/README.md for the data it expects under /data.
 
-FROM python:3.12-slim AS build
+FROM python:3.14-slim AS build
 # The same uv that wrote uv.lock (keep in step with .github/actions/setup-env).
 COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -16,7 +16,7 @@ COPY README.md ./
 COPY src ./src
 RUN uv sync --locked --no-default-groups --no-editable
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 RUN useradd --create-home --uid 1000 intel
 COPY --from=build /app/.venv /app/.venv
 # Repository profiles (taxonomy, components) for the repositories this project covers.

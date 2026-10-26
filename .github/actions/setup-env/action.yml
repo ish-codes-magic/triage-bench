@@ -7,7 +7,7 @@ runs:
     # Caching is left on setup-uv's "auto" default, which disables it for tag pushes,
     # releases and pull_request_target, the events where a poisoned cache could leak
     # into a published artifact.
-    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       with:
         version: "0.11.18" # keep in step with the local uv that wrote uv.lock
         cache-dependency-glob: uv.lock
